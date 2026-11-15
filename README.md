@@ -52,7 +52,7 @@ Zonas são caixas (o jogo usa o bounding box do objeto, com rotação e escala) 
 
 ## Volante G29
 
-- No PC, chave na posição **PS3**. Já vem mapeado (Windows e Linux), sem calibrar: pedais, câmbio H (marchas 1–5 e ré), borboletas = setas, X freio de mão, △ partida, □ cinto, ○ farol, L2 pisca-alerta, R2 câmera, Share reinicia, Options encerra, direcional olha para os lados.
+- No PC, chave na posição **PS3**. Já vem mapeado (Windows e Linux), sem calibrar: pedais, câmbio H (marchas 1–5 e ré), borboletas = setas, X freio de mão, △ partida, □ cinto, ○ farol, L2 pisca-alerta, R2 câmera, Share reinicia, Options encerra, direcional olha para os lados, L3 olha para trás.
 - Em **F2** fica a tabela ação → eixo/botão, com o valor ao vivo. Dá pra **mudar um comando de cada vez**, inverter um eixo ou remover. Fica salvo no navegador.
 - O volante do Mobi tem 2,5 voltas de batente a batente (900°), igual ao G29: a rotação é 1:1.
 

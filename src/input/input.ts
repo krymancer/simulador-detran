@@ -9,7 +9,7 @@ export const BOTOES = [
   'marcha1', 'marcha2', 'marcha3', 'marcha4', 'marcha5', 'marchaR',
   'marchaMais', 'marchaMenos',
   'freioDeMao', 'partida', 'setaEsq', 'setaDir', 'farol', 'alerta', 'cinto',
-  'olharEsq', 'olharDir', 'camera', 'encerrar', 'reiniciar',
+  'olharEsq', 'olharDir', 'olharTras', 'camera', 'encerrar', 'reiniciar',
 ] as const;
 
 export type AcaoEixo = (typeof EIXOS)[number];
@@ -33,7 +33,7 @@ export interface Perfil {
   versao?: number;
 }
 
-const VERSAO_PERFIL = 2;
+const VERSAO_PERFIL = 3;
 
 export const NOMES_ACAO: Record<Acao, string> = {
   volante: 'Volante / direção',
@@ -54,6 +54,7 @@ export const NOMES_ACAO: Record<Acao, string> = {
   cinto: 'Cinto de segurança',
   olharEsq: 'Olhar à esquerda',
   olharDir: 'Olhar à direita',
+  olharTras: 'Olhar para trás (segurar)',
   camera: 'Trocar câmera',
   encerrar: 'Encerrar prova',
   reiniciar: 'Reiniciar carro',
@@ -122,6 +123,7 @@ function perfilG29(gp: Gamepad): Perfil {
     // Direcional: olhar para os lados
     olharEsq: linux ? { tipo: 'eixoBotao', indice: 4, alvo: -1 } : { tipo: 'eixoBotao', indice: 9, alvo: 0.714 },
     olharDir: linux ? { tipo: 'eixoBotao', indice: 4, alvo: 1 } : { tipo: 'eixoBotao', indice: 9, alvo: -0.428 },
+    olharTras: { tipo: 'botao', indice: 11 }, // L3 (botão ao lado do direcional)
   };
   return { id: gp.id, tipo: 'volante', calibrado: true, vinculos, versao: VERSAO_PERFIL };
 }
@@ -149,6 +151,7 @@ export function perfilPadrao(gp: Gamepad): Perfil {
         partida: { tipo: 'botao', indice: 3 },
         reiniciar: { tipo: 'botao', indice: 8 },
         encerrar: { tipo: 'botao', indice: 9 },
+        olharTras: { tipo: 'botao', indice: 11 }, // apertar o analógico direito
         farol: { tipo: 'botao', indice: 12 },
         alerta: { tipo: 'botao', indice: 13 },
         setaEsq: { tipo: 'botao', indice: 14 },
@@ -203,6 +206,8 @@ export interface EstadoEntrada {
   alerta: boolean;
   /** −1 (olhar à esquerda) … +1 (à direita) */
   olhar: number;
+  /** Segurando o botão de olhar para trás. */
+  olharTras: boolean;
   bordas: Set<AcaoBotao>;
   temVolante: boolean;
 }
@@ -211,7 +216,7 @@ const TECLAS: Partial<Record<string, AcaoBotao>> = {
   Digit1: 'marcha1', Digit2: 'marcha2', Digit3: 'marcha3', Digit4: 'marcha4', Digit5: 'marcha5',
   KeyR: 'marchaR',
   Space: 'freioDeMao', KeyI: 'partida', KeyQ: 'setaEsq', KeyE: 'setaDir', KeyC: 'cinto', KeyV: 'camera',
-  KeyL: 'farol', KeyK: 'alerta', KeyZ: 'olharEsq', KeyX: 'olharDir',
+  KeyL: 'farol', KeyK: 'alerta', KeyZ: 'olharEsq', KeyX: 'olharDir', KeyB: 'olharTras',
   Enter: 'encerrar', Backspace: 'reiniciar',
 };
 
@@ -260,7 +265,18 @@ export class Entrada {
     let p = this.perfis.get(gp.id);
     if (!p) {
       const salvo = carregarPerfil(gp.id);
-      p = salvo && (salvo.versao ?? 1) >= VERSAO_PERFIL ? salvo : perfilPadrao(gp);
+      const padrao = perfilPadrao(gp);
+      if (!salvo || (salvo.versao ?? 1) < 2) p = padrao;
+      else if ((salvo.versao ?? 1) < VERSAO_PERFIL) {
+        // Perfil antigo: mantém o que o jogador mudou e só acrescenta comandos novos cujo botão/eixo está livre.
+        const usados = new Set(Object.values(salvo.vinculos).map((v) => `${v!.tipo}:${v!.indice}`));
+        const vinculos = { ...salvo.vinculos };
+        for (const [a, v] of Object.entries(padrao.vinculos)) {
+          if (!vinculos[a as Acao] && !usados.has(`${v!.tipo}:${v!.indice}`)) vinculos[a as Acao] = v;
+        }
+        p = { ...salvo, vinculos, versao: VERSAO_PERFIL };
+        salvarPerfil(p);
+      } else p = salvo;
       this.perfis.set(gp.id, p);
     }
     return p;
@@ -405,6 +421,7 @@ export class Entrada {
       farol: this.farol,
       alerta: this.alerta,
       olhar,
+      olharTras: segurando.has('olharTras'),
       bordas,
       temVolante,
     };

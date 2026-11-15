@@ -231,7 +231,7 @@ export class Calibracao {
       <button data-acao="padrao">Restaurar padrão</button>
       <button data-acao="fechar">Fechar (F2)</button>
     </div>
-    <p class="dica">Teclado: W/S acelerador/freio · A/D direção · Shift embreagem · 1–5/R/N marchas · Espaço freio de mão · I partida · Q/E setas · L farol · K pisca-alerta · C cinto · Z/X olhar · V câmera.</p>`;
+    <p class="dica">Teclado: W/S acelerador/freio · A/D direção · Shift embreagem · 1–5/R/N marchas · Espaço freio de mão · I partida · Q/E setas · L farol · K pisca-alerta · C cinto · Z/X olhar · B olhar para trás · V câmera.</p>`;
     this.render(html);
 
     // Valores ao vivo sem refazer o HTML (para os botões continuarem clicáveis).

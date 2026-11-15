@@ -161,7 +161,7 @@ window.addEventListener('drop', (e) => {
 
 // ---------- Câmera ----------
 let modoCamera: ModoCamera = 'cockpit';
-const olhar = { yaw: 0, pitch: 0, arrastando: false, yawSuave: 0 };
+const olhar = { yaw: 0, pitch: 0, arrastando: false, yawSuave: 0, tras: 0 };
 renderer.domElement.addEventListener('pointerdown', (e) => { olhar.arrastando = true; renderer.domElement.setPointerCapture(e.pointerId); });
 renderer.domElement.addEventListener('pointerup', () => (olhar.arrastando = false));
 renderer.domElement.addEventListener('pointermove', (e) => {
@@ -173,7 +173,7 @@ const camPos = new THREE.Vector3();
 const camAlvo = new THREE.Vector3();
 let camIniciada = false;
 
-function atualizarCamera(dt: number, olharEntrada: number): void {
+function atualizarCamera(dt: number, olharEntrada: number, olharTras: boolean): void {
   if (!jogo) return;
   const g = jogo.visual.grupo;
   if (!olhar.arrastando) {
@@ -181,11 +181,15 @@ function atualizarCamera(dt: number, olharEntrada: number): void {
     olhar.pitch *= Math.exp(-dt * 2.5);
   }
   // Direcional/analógico: olhar para os lados (virar a cabeça para os retrovisores/ponto cego).
-  const alvoYaw = olhar.yaw - olharEntrada * 1.25;
-  olhar.yawSuave += (alvoYaw - olhar.yawSuave) * Math.min(1, dt * 8);
+  // Olhar para trás: vira a cabeça por cima do ombro direito (como para dar ré).
+  const alvoYaw = olharTras ? -2.75 : olhar.yaw - olharEntrada * 1.25;
+  olhar.yawSuave += (alvoYaw - olhar.yawSuave) * Math.min(1, dt * 7);
+  olhar.tras += ((olharTras ? 1 : 0) - olhar.tras) * Math.min(1, dt * 7);
   if (modoCamera === 'cockpit') {
     jogo.visual.olho.getWorldPosition(camera.position);
     g.getWorldQuaternion(camera.quaternion);
+    // Ao virar para trás, o tronco gira e a cabeça vai para o centro do carro.
+    camera.position.add(new THREE.Vector3(-0.2, 0.07, -0.08).multiplyScalar(olhar.tras).applyQuaternion(camera.quaternion));
     camera.rotateY(Math.PI + olhar.yawSuave); // câmera olha para −Z; carro aponta +Z
     camera.rotateX(-0.06 + olhar.pitch);
     camera.fov = 68;
@@ -310,7 +314,7 @@ function quadro(agora: number): void {
   for (const o of jogo.prova.obstaculosTocados) for (const m of jogo.obstaculoMat.get(o) ?? []) m.emissive?.setHex(0x880000);
 
   ceu.atualizarSombra(jogo.visual.grupo.position);
-  atualizarCamera(dt, ent.olhar);
+  atualizarCamera(dt, ent.olhar, ent.olharTras);
   som.atualizar(trem.rpm, trem.aceleradorEfetivo, trem.ligado, ent.partida && !bloqueiaPartida, CARRO.motor.cilindros);
 
   hud.atualizar(jogo.sim.carro, ent, jogo.prova, t, piscando, modoCamera, dt);
