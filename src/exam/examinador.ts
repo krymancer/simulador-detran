@@ -4,6 +4,7 @@ import { px } from '../world/autoescola';
 import { dentroDaZona, Zona } from '../world/parser';
 import { amostrar, Faixa, projetar } from '../world/vias';
 import type { Cabine, Prova } from './exam';
+import type { Marcador } from '../treino/tipos';
 import { dentroRet, distanciaCalcada, ESTACIONAMENTO, TRECHO_MEIO_FIO, VAGAS_90 } from './manobras';
 import { deltaS } from './pista';
 import { AFASTAMENTO_MEIO_FIO, PRAZO_INSTRUCAO, TEMPO_MEIA_VOLTA, TEMPO_VAGA_90 } from './regras';
@@ -82,6 +83,8 @@ interface Etapa {
   aoConcluir?: (c: Contexto) => void;
   /** Manobra em curso: suspende PARE e seta em conversões na prova (ver Prova.emManobra). */
   manobra?: boolean;
+  /** Marcas de ajuda no chão enquanto a etapa está ativa (ex.: onde parar). */
+  marcadores?: Marcador[];
 }
 
 const PERTO_FAIXA = 0.8; // folga lateral para "está nesta faixa" (m)
@@ -123,6 +126,10 @@ export class Examinador {
   /** Id da etapa atual (null quando acabou). */
   get idEtapa(): string | null {
     return this.etapas[this.indice]?.id ?? null;
+  }
+  /** Marcas no chão da etapa atual (desenhadas pelo main com as guias do treino). */
+  get marcadores(): Marcador[] {
+    return this.etapas[this.indice]?.marcadores ?? [];
   }
   get totalEtapas(): number {
     return this.etapas.length;
@@ -448,13 +455,28 @@ export class Examinador {
 
     // 5–7 Parada junto ao meio-fio + pisca-alerta ----------------------------
     let pontoParada: THREE.Vector3 | null = null;
+    // Área de parada no chão: do começo ao fim do trecho, encostada no meio-fio da direita.
+    const areaMeioFio = ((): Marcador[] => {
+      const comp = deltaS(ext, sMeioFioFim, sMeioFioIni);
+      const meio = amostrar(ext, sMeioFioIni + comp / 2);
+      const dir = meio.direcao.clone().setY(0).normalize();
+      const direita = new THREE.Vector3(-dir.z, 0, dir.x);
+      const dc = distanciaCalcada(meio.ponto, direita, 5);
+      const larg = 2.2;
+      const centro = meio.ponto.clone().addScaledVector(direita, (Number.isFinite(dc) ? dc : ext.meiaLargura) - larg / 2).setY(0.01);
+      return [{
+        id: 'exame_meio_fio', tipo: 'alvo', posicao: centro, yaw: Math.atan2(dir.x, dir.z),
+        largura: larg, comprimento: Math.abs(comp), cor: 0x38d16a, rotulo: 'Pare aqui', ativo: true,
+      }];
+    })();
     {
       let paradoDesde: number | null = null;
       let ultimaSetaAndando = -999;
       etapas.push({
         id: 'meio_fio',
         textoInicio: 'Siga pelo anel.',
-        texto: 'Mais à frente, ligue a seta à direita e pare junto ao meio-fio, a no máximo cinquenta centímetros da calçada.',
+        texto: 'Ligue a seta à direita e encoste o carro no meio-fio da direita, na área verde marcada no chão. Pare a no máximo cinquenta centímetros da calçada.',
+        marcadores: areaMeioFio,
         anunciarPerto: { ponto: pontoExt(sMeioFioIni), distancia: 40 },
         aoIniciar: () => {
           paradoDesde = null;

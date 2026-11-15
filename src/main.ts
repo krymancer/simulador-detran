@@ -689,7 +689,8 @@ function quadro(agora: number): void {
     proximaFala();
   }
   uiTreino.atualizar();
-  guias.atualizar(treino, dt);
+  // marcas no chão: as da lição no treino; na prova, as da etapa do examinador (ex.: onde parar no meio-fio)
+  guias.atualizar(emTreino ? treino.marcadores : jogo.examinador?.marcadores ?? [], dt);
   aplicarModoTreino();
   if (jogo.examinador && !emTreino) {
     jogo.examinador.atualizar(dt);

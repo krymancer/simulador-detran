@@ -338,9 +338,8 @@ export class GuiasTreino {
     this.grupo.renderOrder = 5;
   }
 
-  atualizar(treino: Treino, dt: number): void {
+  atualizar(marcadores: Marcador[], dt: number): void {
     this.t += dt;
-    const marcadores = treino.ativa ? treino.marcadores : [];
     const vistos = new Set<string>();
     for (const m of marcadores) {
       vistos.add(m.id);
