@@ -6,6 +6,7 @@ import { DT_FISICA, HZ_FISICA, iniciarRapier, Simulacao } from '../src/sim/simul
 import { lerMapa } from '../src/world/parser';
 import { criarMapaAutoescola } from '../src/world/autoescola';
 import { separacaoOBB, Trafego, type OpcoesTrafego } from '../src/world/trafego';
+import { corSemaforo } from '../src/exam/exam';
 
 beforeAll(async () => {
   await iniciarRapier();
@@ -33,7 +34,7 @@ function poseJogador(sim: Simulacao) {
 }
 
 describe('trânsito da autoescola', () => {
-  it('carros andam sem bater entre si nem no carro parado; pedestres atravessam', () => {
+  it('carros andam sem bater entre si nem no carro parado', () => {
     const { sim, trafego } = novo();
     let anterior = trafego.estadoCarros();
     expect(anterior.length).toBe(6);
@@ -69,7 +70,6 @@ describe('trânsito da autoescola', () => {
     expect(percorrido).toBeGreaterThan(50);
     expect(menorFolga).toBeGreaterThan(1.0);
     expect(menorFolgaJogador).toBeGreaterThan(5);
-    expect(trafego.travessias()).toBeGreaterThanOrEqual(1);
     expect(eventos).toEqual([]);
 
     const info = trafego.info();
@@ -149,5 +149,33 @@ describe('trânsito da autoescola', () => {
     const antes = sim.mundo.bodies.len();
     trafego.liberar();
     expect(sim.mundo.bodies.len()).toBe(antes - 6);
+  });
+
+  it('pedestres só entram na faixa com o semáforo vermelho para os carros', () => {
+    const { sim, trafego } = novo();
+    expect(trafego.faixasComSemaforo()).toEqual([
+      { faixa: 'FAIXA_PEDESTRE_1', semaforos: ['2', '3'] },
+      { faixa: 'FAIXA_PEDESTRE_2', semaforos: ['2', '3'] },
+      { faixa: 'FAIXA_PEDESTRE_3', semaforos: ['1'] },
+    ]);
+    const sems = new Map(trafego.faixasComSemaforo().map((f) => [f.faixa, f.semaforos]));
+    let antes = trafego.info().pedestres.map((p) => p.naFaixa);
+    let entradas = 0;
+    for (let i = 0; i < 80 * HZ_FISICA; i++) {
+      trafego.passo(DT_FISICA);
+      sim.passo(COMANDOS_NEUTROS);
+      const agora = trafego.info().pedestres.map((p) => p.naFaixa);
+      agora.forEach((f, k) => {
+        if (!f || antes[k] === f) return;
+        entradas++;
+        for (const id of sems.get(f) ?? []) {
+          const s = sim.mapa.semaforos.find((x) => x.id === id)!;
+          expect(corSemaforo(s, sim.tempo), `${f} / semáforo ${id}`).toBe('vermelho');
+        }
+      });
+      antes = agora;
+    }
+    expect(entradas).toBeGreaterThan(0);
+    expect(trafego.travessias()).toBeGreaterThanOrEqual(1);
   });
 });

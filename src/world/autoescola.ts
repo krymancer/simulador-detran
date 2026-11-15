@@ -399,8 +399,10 @@ export function criarMapaAutoescola(op: OpcoesAutoescola = {}): THREE.Group {
 
   // ---- Passagem de nível (linha férrea em x ≈ 676): parada obrigatória antes dos trilhos (CTB art. 212).
   // As zonas terminam ANTES das cancelas (que ficam a ±4,3 m da linha), não na pintura.
-  raiz.add(zonaPorCantos('ZONA_PARE_PN_1', [500, 1312], [574, 1312], 76)); // faixa de baixo, indo para leste
-  raiz.add(zonaPorCantos('ZONA_PARE_PN_2', [856, 1232], [782, 1232], 76)); // faixa de cima, indo para oeste
+  // Parada antes da passagem de nível: termina na linha branca antes do X pintado
+  // (x = 443 indo para leste, x = 900 indo para oeste), então o carro para fora do X.
+  raiz.add(zonaPorCantos('ZONA_PARE_PN_1', [355, 1312], [443, 1312], 76)); // faixa de baixo, indo para leste
+  raiz.add(zonaPorCantos('ZONA_PARE_PN_2', [988, 1232], [900, 1232], 76)); // faixa de cima, indo para oeste
 
   // ---- Rampa (reta da direita): zonas da subida em cada sentido.
   const platoPx = RAMPA.platoM / METROS_POR_PX;

@@ -473,7 +473,7 @@ describe('examinador: manobras novas', () => {
     c.rodar(0.1);
     c.ex.pular('meio_fio');
     const s = projetar(c.ext, px(121, 820)).s;
-    c.andar(c.ext, s - 5, s + 30);
+    c.andar(c.ext, s - 5, s + 20);
     expect(todas(c)).toEqual(['nao_seguiu_instrucao']);
     expect(c.ex.idEtapa).toBe('passagem_nivel_1');
   });

@@ -2,7 +2,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import type { Simulacao } from '../sim/simulation';
 import type { InfoTrafego } from './infoTrafego';
-import type { Zona } from './parser';
+import type { Semaforo, Zona } from './parser';
 import { ALTURA_CALCADA, alturaTerreno, lerGrade, METROS_POR_PX, px } from './autoescola';
 import { corSemaforo } from '../exam/exam';
 import grade from './autoescola/grade.json';
@@ -44,6 +44,8 @@ const A_LAT = 1.6; // aceleração lateral confortável nas curvas (m/s²)
 const A_CONF = 2.5; // desaceleração planejada (m/s²)
 const A_FREIO = 4; // frenagem normal (m/s²)
 const A_EMERG = 8; // frenagem de emergência (m/s²)
+/** Distância máxima (m) da linha de retenção até a faixa de pedestre que o semáforo controla. */
+const SEMAFORO_FAIXA_MAX = 20;
 const GANHO_V = 3; // 1/s: rapidez com que a velocidade segue o alvo
 const OLHAR = 25; // alcance do “olhar” à frente (m)
 const N_OLHAR = Math.ceil(OLHAR / H);
@@ -665,6 +667,12 @@ export class Trafego {
   /** lats[i*n+j]: distância lateral do carro j até o caminho do carro i. */
   private lats = new Float64Array(0);
   private ocupada: Uint8Array;
+  /**
+   * Para cada faixa de pedestre (índice da zona): semáforos cujos carros passam
+   * por ela logo depois da linha de retenção. O pedestre só atravessa quando
+   * todos estão vermelhos para os carros.
+   */
+  private semaforosDaFaixa = new Map<number, Semaforo[]>();
   private tempo = 0;
   // estado do carro do jogador neste passo
   private jx = 0;
@@ -700,6 +708,7 @@ export class Trafego {
       else if (z.tipo === 'linha_parada') this.zonas.push(prepararZona(z, 'semaforo'));
     }
     this.ocupada = new Uint8Array(this.zonas.length);
+    this.associarSemaforos();
     for (const id of ['anel_externo', 'anel_interno', 'diagonal_1', 'diagonal_2', 'diagonal_3']) {
       this.rotas.set(id, montarRota(id, pontosRota(id), this.zonas));
     }
@@ -1013,6 +1022,38 @@ export class Trafego {
     return false;
   }
 
+  private associarSemaforos(): void {
+    const tmp = { x: 0, z: 0 };
+    this.zonas.forEach((fz, fi) => {
+      if (fz.tipo !== 'faixa') return;
+      const lista: Semaforo[] = [];
+      for (const lz of this.zonas) {
+        if (lz.tipo !== 'semaforo') continue;
+        const sem = this.sim.mapa.semaforos.find((x) => x.id === lz.zona.id);
+        if (!sem) continue;
+        // segue em frente a partir da linha até a altura da faixa: o carro passa por ela?
+        const adiante = (fz.cx - lz.cx) * lz.azx + (fz.cz - lz.cz) * lz.azz;
+        if (adiante < 0 || adiante > SEMAFORO_FAIXA_MAX) continue;
+        localZona(fz, lz.cx + lz.azx * adiante, lz.cz + lz.azz * adiante, tmp);
+        if (Math.abs(tmp.x) <= fz.hx + 1 && Math.abs(tmp.z) <= fz.hz + 1) lista.push(sem);
+      }
+      if (lista.length) this.semaforosDaFaixa.set(fi, lista);
+    });
+  }
+
+  /** Semáforos da faixa vermelhos para os carros agora e daqui a `seg` s (dá tempo de atravessar). */
+  private sinalFechadoParaCarros(faixa: number, seg: number): boolean {
+    const sems = this.semaforosDaFaixa.get(faixa);
+    if (!sems) return true; // faixa sem semáforo
+    const t = this.sim.tempo;
+    return sems.every((s) => corSemaforo(s, t) === 'vermelho' && corSemaforo(s, t + seg) === 'vermelho');
+  }
+
+  /** Faixas com semáforo (para os testes). */
+  faixasComSemaforo(): { faixa: string; semaforos: string[] }[] {
+    return [...this.semaforosDaFaixa].map(([i, l]) => ({ faixa: this.zonas[i].zona.nome, semaforos: l.map((s) => s.id) }));
+  }
+
   private passoPedestres(dt: number): void {
     this.ocupada.fill(0);
     for (const p of this.pedestres) {
@@ -1020,7 +1061,8 @@ export class Trafego {
       const largura = 2 * (zt.hz + 0.75);
       if (p.estado === 'esperando') {
         p.espera -= dt;
-        if (p.espera <= 0 && !this.veiculoChegando(p.zona)) {
+        const tAtravessar = largura / Math.max(p.vel, 0.3) + 1.5;
+        if (p.espera <= 0 && this.sinalFechadoParaCarros(p.zona, tAtravessar) && !this.veiculoChegando(p.zona)) {
           p.estado = 'atravessando';
           p.t = 0;
         }

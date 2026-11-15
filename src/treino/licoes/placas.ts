@@ -24,7 +24,7 @@ const PARADAS: Parada[] = [
   {
     id: 'r1',
     titulo: 'R-1 — Parada obrigatória (PARE)',
-    pose: () => naFaixa('anel_externo', 560, 1312, 12), // rua de baixo, antes da passagem de nível
+    pose: () => naFaixa('anel_externo', 440, 1312, 10), // rua de baixo, antes da passagem de nível
     explicacao: 'Esta é a placa PARE, um octógono vermelho. Ela é uma ordem: você tem de parar o carro totalmente antes da linha, olhar para os dois lados e só seguir quando estiver livre. Diminuir e passar devagar não vale.',
     quiz: {
       pergunta: 'Na placa PARE, o que você deve fazer?',
@@ -71,7 +71,7 @@ const PARADAS: Parada[] = [
   {
     id: 'cruz',
     titulo: 'Cruz de Santo André e a linha férrea',
-    pose: () => naFaixa('anel_externo', 560, 1312, 3),
+    pose: () => naFaixa('anel_externo', 440, 1312, 3),
     explicacao: 'O X branco e vermelho é a Cruz de Santo André: ele marca o próprio cruzamento com o trem. O trem sempre tem a preferência. Pare antes da cancela, olhe para os dois lados e só atravesse com a passagem livre. Se as luzes piscarem ou a cancela descer, espere o trem passar.',
     quiz: {
       pergunta: 'Chegando à linha do trem com as luzes piscando, você:',
