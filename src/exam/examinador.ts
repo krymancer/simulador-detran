@@ -19,7 +19,7 @@ import { AFASTAMENTO_MEIO_FIO, PRAZO_INSTRUCAO, TEMPO_MEIA_VOLTA, TEMPO_VAGA_90 
  *
  *  id                    onde                                         o que
  *  0  partida            vaga do estacionamento de baixo (spawn)      cinto + partida
- *  1  saida              saída do estacionamento (ZONA_PARE_3)        seta, PARE, virar à direita → anel externo
+ *  1  saida              saída do estacionamento                      seta, virar à direita → anel externo
  *  2  rampa              reta da direita, subindo (ZONA_RAMPA_1)      parar na subida e sair sem recuar
  *  3  farol              logo depois da rampa, ainda na reta          acender o farol baixo (5 s)
  *  4  semaforo_cima      rua de cima, sentido oeste (LINHA_PARADA_2)  semáforo + faixas de pedestres
@@ -390,7 +390,7 @@ export class Examinador {
     // 1 ----------------------------------------------------------------------
     etapas.push({
       id: 'saida',
-      texto: 'Ligue a seta à direita e saia da vaga. Pare na placa PARE da saída do estacionamento e vire à direita.',
+      texto: 'Ligue a seta à direita, saia da vaga e, no fim do estacionamento, vire à direita.',
       concluida: naFaixa(ext, sSpawnExt + 10, 8),
       // virou à esquerda: já está no anel interno, depois da passagem de nível — segue para a baliza
       errou: naFaixa(int, sSpawnInt + 10, 8),

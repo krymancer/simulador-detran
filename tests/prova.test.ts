@@ -95,7 +95,7 @@ describe('mapa da autoescola (planta)', () => {
     const tipos = mapa.zonas.map((z) => z.tipo).sort();
     expect(tipos).toEqual([
       'baliza', 'faixa_pedestre', 'faixa_pedestre', 'faixa_pedestre',
-      'linha_parada', 'linha_parada', 'linha_parada', 'pare', 'pare', 'pare', 'rampa', 'rampa',
+      'linha_parada', 'linha_parada', 'linha_parada', 'pare', 'pare', 'rampa', 'rampa',
     ]);
     expect(mapa.semaforos.map((s) => s.id).sort()).toEqual(['1', '2', '3']);
     // cada linha de retenção tem o seu semáforo

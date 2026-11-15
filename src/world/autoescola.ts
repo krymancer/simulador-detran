@@ -396,7 +396,6 @@ export function criarMapaAutoescola(op: OpcoesAutoescola = {}): THREE.Group {
   }
 
   // ---- Parada obrigatória (PARE) na saída do estacionamento (sentido norte).
-  raiz.add(zonaPorCantos('ZONA_PARE_3', [1232, 1400], [1232, 1356], 625));
 
   // ---- Passagem de nível (linha férrea em x ≈ 676): parada obrigatória antes dos trilhos (CTB art. 212).
   // As zonas terminam ANTES das cancelas (que ficam a ±4,3 m da linha), não na pintura.

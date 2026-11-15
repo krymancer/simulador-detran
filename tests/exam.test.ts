@@ -282,11 +282,11 @@ describe('examinador: trajeto completo', () => {
     c.prova.iniciada = true;
     c.rodar(0.1);
     expect(c.ex.idEtapa).toBe('saida');
-    expect(c.ex.instrucao).toMatch(/PARE/);
+    expect(c.ex.instrucao).toMatch(/direita/);
 
-    // saída: PARE do estacionamento + direita
+    // saída: seta e direita (sem PARE no estacionamento)
     c.cabine({ seta: 'direita' });
-    c.atravessar('ZONA_PARE_3', 0);
+    c.rodar(0.2);
     c.cabine({ seta: null });
     c.naFaixa(c.ext, projetar(c.ext, c.spawn).s + 10);
     expect(c.ex.idEtapa).toBe('rampa');
@@ -575,14 +575,6 @@ describe('examinador: manobras novas', () => {
     c.rodar(1.5);
     expect(todas(c)).toEqual(['nao_seguiu_instrucao']);
     expect(c.ex.idEtapa).toBe('estacionar');
-  });
-
-  it('meia-volta: cruzar a área do PARE do estacionamento de frente durante a manobra não é falta', async () => {
-    const c = await cenario();
-    c.rodar(0.1);
-    c.ex.pular('meia_volta');
-    c.atravessar('ZONA_PARE_3');
-    expect(todas(c)).not.toContain('nao_parou_pare');
   });
 
   it('estacionar: sem estacionar em 3 min, falta e a prova é encerrada', async () => {

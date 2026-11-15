@@ -24,7 +24,7 @@ const PARADAS: Parada[] = [
   {
     id: 'r1',
     titulo: 'R-1 — Parada obrigatória (PARE)',
-    pose: () => ({ x: 965, y: 1450, yaw: Math.PI }), // estacionamento de baixo, de frente para a saída
+    pose: () => naFaixa('anel_externo', 560, 1312, 12), // rua de baixo, antes da passagem de nível
     explicacao: 'Esta é a placa PARE, um octógono vermelho. Ela é uma ordem: você tem de parar o carro totalmente antes da linha, olhar para os dois lados e só seguir quando estiver livre. Diminuir e passar devagar não vale.',
     quiz: {
       pergunta: 'Na placa PARE, o que você deve fazer?',

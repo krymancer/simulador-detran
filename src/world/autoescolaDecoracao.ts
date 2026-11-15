@@ -38,7 +38,8 @@ const PLACAS: Placa[] = [
   { codigo: 'R-19', x: 1530, y: 700, face: [0, -1], opts: { valor: 30 } },
   { codigo: 'R-19', x: 1190, y: 1010, face: DIAG, opts: { valor: 30 } },
   { codigo: 'R-6a', x: 1240, y: 860, face: DIAG },             // proibido estacionar (ao lado das áreas zebradas)
-  { codigo: 'R-1', x: 912, y: 1385, face: [0, 1] },            // PARE na saída do estacionamento
+  { codigo: 'R-1', x: 590, y: 1370, face: [-1, 0] },           // PARE antes da passagem de nível (indo para leste)
+  { codigo: 'R-1', x: 770, y: 1186, face: [1, 0] },            // PARE antes da passagem de nível (indo para oeste)
 ];
 
 function gradeElevada() {
