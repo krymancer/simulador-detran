@@ -20,6 +20,9 @@ export interface EstadoRoda {
   colisorChao: number | null; // handle do colisor tocado
   pontoContato: THREE.Vector3;
   cerdaLat: number;
+  /** Força lateral do pneu já com a relaxação (não aparece instantânea). */
+  fyRelax: number;
+  compressao: number;
 }
 
 const _v = new THREE.Vector3();
@@ -96,6 +99,8 @@ export class Veiculo {
         colisorChao: null,
         pontoContato: new THREE.Vector3(),
         cerdaLat: 0,
+        fyRelax: 0,
+        compressao: 0,
       };
     };
     this.rodas = [mk(true, true), mk(true, false), mk(false, true), mk(false, false)];
@@ -110,6 +115,7 @@ export class Veiculo {
     this.trem.reiniciar();
     for (const rd of this.rodas) {
       rd.cerdaLat = 0;
+      rd.fyRelax = 0;
       rd.compressaoAnterior = 0;
     }
   }
@@ -178,6 +184,8 @@ export class Veiculo {
       const side = new THREE.Vector3();
       if (!hit) {
         rd.noChao = false;
+        rd.compressao = 0;
+        rd.fyRelax = 0;
         rd.comprimento = s.cursoMax;
         rd.compressaoAnterior = 0;
         rd.fz = 0;
@@ -202,7 +210,12 @@ export class Veiculo {
       rd.compressaoAnterior = compressao;
       const k = rd.dianteira ? s.molaDianteira : s.molaTraseira;
       const c = rd.dianteira ? s.amortecedorDianteiro : s.amortecedorTraseiro;
-      let fz = k * compressao + c * velComp;
+      rd.compressao = compressao;
+      // Barra estabilizadora (usa a compressão da roda oposta no passo anterior: 5 ms de atraso, irrelevante).
+      const oposta = this.rodas[this.rodas.indexOf(rd) ^ 1];
+      const kBarra = rd.dianteira ? s.barraDianteira : s.barraTraseira;
+      const difBarra = oposta.noChao ? compressao - oposta.compressao : compressao - Math.max(0, s.cursoMax - oposta.comprimento);
+      let fz = k * compressao + c * velComp + kBarra * difBarra;
       if (rd.comprimento < s.batenteCurso) fz += s.batenteRigidez * (s.batenteCurso - rd.comprimento);
       fz = Math.max(0, fz);
       rd.fz = fz;
@@ -220,7 +233,11 @@ export class Veiculo {
       // Lateral: Pacejka simplificado + cerda para baixa velocidade (não escorrega parado).
       const D = p.mu * fz;
       const alfa = Math.atan2(rd.vy, Math.max(Math.abs(rd.vx), 3));
-      let fy = -D * Math.sin(p.C * Math.atan(p.B * alfa));
+      const fyPacejka = -D * Math.sin(p.C * Math.atan(p.B * alfa));
+      // Relaxação: a força lateral cresce ao longo de ~relaxacao metros rodados.
+      const kRelax = Math.min(1, (Math.max(Math.abs(rd.vx), 0.5) * dt) / p.relaxacao);
+      rd.fyRelax += (fyPacejka - rd.fyRelax) * kRelax;
+      let fy = rd.fyRelax;
       const baixa = Math.max(0, 1 - Math.hypot(rd.vx, rd.vy) / 2);
       rd.cerdaLat = rd.cerdaLat * (baixa > 0 ? 1 : 0.5) + rd.vy * dt;
       fy -= baixa * p.rigidezCerdaLat * rd.cerdaLat;
@@ -260,15 +277,14 @@ export class Veiculo {
         if (Math.abs(fx) > D) fx = Math.sign(fx) * D;
       }
       rd.fy = fy;
-      const F = new THREE.Vector3()
-        .addScaledVector(frentes[i], fx)
-        .addScaledVector(lados[i], fy)
-        .addScaledVector(_cima, rd.fz);
-      corpo.applyImpulseAtPoint(
-        { x: F.x * dt, y: F.y * dt, z: F.z * dt },
-        { x: rd.pontoContato.x, y: rd.pontoContato.y, z: rd.pontoContato.z },
-        true,
-      );
+      // Suspensão no ponto de contato; forças do pneu no centro de rolagem do eixo
+      // (a geometria da suspensão “levanta” o ponto onde a força lateral atua no chassi).
+      const pz = rd.pontoContato;
+      corpo.applyImpulseAtPoint({ x: _cima.x * rd.fz * dt, y: _cima.y * rd.fz * dt, z: _cima.z * rd.fz * dt }, { x: pz.x, y: pz.y, z: pz.z }, true);
+      const hRC = rd.dianteira ? s.centroRolagemDianteiro : s.centroRolagemTraseiro;
+      const F = new THREE.Vector3().addScaledVector(frentes[i], fx).addScaledVector(lados[i], fy);
+      const pRC = pz.clone().addScaledVector(_cima, hRC);
+      corpo.applyImpulseAtPoint({ x: F.x * dt, y: F.y * dt, z: F.z * dt }, { x: pRC.x, y: pRC.y, z: pRC.z }, true);
       if (rd.dianteira) this.torqueAutoalinhante += -fy * p.rastro;
     }
 

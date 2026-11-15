@@ -34,6 +34,12 @@ export interface CarConfig {
     amortecedorTraseiro: number;
     batenteCurso: number;     // abaixo desse comprimento, o batente entra
     batenteRigidez: number;
+    /** Barra estabilizadora (rigidez na roda, N/m): resiste à diferença de compressão esquerda/direita. */
+    barraDianteira: number;
+    barraTraseira: number;
+    /** Altura do centro de rolagem (m acima do chão): onde as forças do pneu “entram” no chassi. */
+    centroRolagemDianteiro: number;
+    centroRolagemTraseiro: number;
   };
 
   pneu: {
@@ -46,6 +52,7 @@ export interface CarConfig {
     rigidezCerdaLat: number;
     resistenciaRolagem: number;    // Crr
     rastro: number;                // m, rastro pneumático (torque autoalinhante → FFB)
+    relaxacao: number;             // m, comprimento de relaxação lateral (o pneu leva ~isso para criar força)
   };
 
   direcao: {
@@ -128,6 +135,10 @@ export const KWID: CarConfig = {
     amortecedorTraseiro: 1400,
     batenteCurso: 0.06,
     batenteRigidez: 150000,
+    barraDianteira: 16000,
+    barraTraseira: 9000,
+    centroRolagemDianteiro: 0.06,
+    centroRolagemTraseiro: 0.14,
   },
 
   pneu: {
@@ -139,6 +150,7 @@ export const KWID: CarConfig = {
     rigidezCerdaLat: 60000,
     resistenciaRolagem: 0.012,
     rastro: 0.035,
+    relaxacao: 0.35,
   },
 
   direcao: { voltasBatenteABatente: 3.0, anguloMaxRoda: (35 * Math.PI) / 180 },
@@ -202,7 +214,15 @@ export const MOBI: CarConfig = {
   bitolaDianteira: 1.41,
   bitolaTraseira: 1.4,
   roda: { raio: 0.292, inercia: 0.95 }, // 175/65 R14
-  suspensao: { ...KWID.suspensao, molaDianteira: 23000, molaTraseira: 18000, amortecedorDianteiro: 1900, amortecedorTraseiro: 1550 },
+  suspensao: {
+    ...KWID.suspensao,
+    molaDianteira: 23000,
+    molaTraseira: 18000,
+    amortecedorDianteiro: 2300,
+    amortecedorTraseiro: 1900,
+    barraDianteira: 12000,
+    barraTraseira: 6000,
+  },
   // 2,5 voltas = 900°: casa 1:1 com o G29.
   direcao: { voltasBatenteABatente: 2.5, anguloMaxRoda: (36 * Math.PI) / 180 },
   motor: {

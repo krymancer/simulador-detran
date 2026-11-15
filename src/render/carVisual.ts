@@ -536,6 +536,45 @@ const FRAG_CORPO = /* glsl */ `
   diffuseColor.rgb = cor;
 `;
 
+
+/** Retângulo arredondado centrado na origem. */
+function retArredondado(w: number, h: number, r: number): THREE.Shape {
+  const s = new THREE.Shape();
+  const x = -w / 2, y = -h / 2;
+  r = Math.min(r, w / 2, h / 2);
+  s.moveTo(x + r, y);
+  s.lineTo(x + w - r, y);
+  s.quadraticCurveTo(x + w, y, x + w, y + r);
+  s.lineTo(x + w, y + h - r);
+  s.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  s.lineTo(x + r, y + h);
+  s.quadraticCurveTo(x, y + h, x, y + h - r);
+  s.lineTo(x, y + r);
+  s.quadraticCurveTo(x, y, x + r, y);
+  return s;
+}
+
+/**
+ * Espelho embutido: vidro arredondado (UV 0..1 no retângulo todo) recuado dentro
+ * de uma moldura que sobressai da carcaça — o vidro fica “abraçado” pelo plástico.
+ * Frente da moldura em z = zFace + ressalto; vidro em z = zFace + 0,001.
+ */
+function espelhoEmbutido(w: number, h: number, r: number, borda: number, zFace: number, ressalto = 0.01) {
+  const vidroShape = retArredondado(w, h, r);
+  const vidro = new THREE.ShapeGeometry(vidroShape, 6);
+  const pos = vidro.getAttribute('position');
+  const uv = vidro.getAttribute('uv');
+  for (let i = 0; i < pos.count; i++) uv.setXY(i, (pos.getX(i) + w / 2) / w, (pos.getY(i) + h / 2) / h);
+  vidro.translate(0, 0, zFace + 0.001);
+  const anel = retArredondado(w + 2 * borda, h + 2 * borda, r + borda);
+  anel.holes.push(retArredondado(w - 0.002, h - 0.002, r));
+  const moldura = new THREE.ExtrudeGeometry(anel, {
+    depth: ressalto + 0.006, bevelEnabled: true, bevelThickness: 0.003, bevelSize: 0.0025, bevelSegments: 2, curveSegments: 6,
+  });
+  moldura.translate(0, 0, zFace - 0.006);
+  return { vidro, moldura };
+}
+
 // ---------------------------------------------------------------------------
 // Utilidades de geometria
 // ---------------------------------------------------------------------------
@@ -925,9 +964,10 @@ export class VisualCarro {
       casca.applyMatrix4(carcaca.matrix);
       this.lote(plastico, casca);
       this.lote(plastico, barra(v3(lado * 0.77, Y(0.985), zEsp), v3(lado * 0.88, Y(1.0), zEsp + 0.01), 0.022, 0.018, 8));
-      const sup = new THREE.Mesh(new THREE.PlaneGeometry(0.225, 0.13), espelhoMat());
-      sup.position.set(0, 0, 0.008); // à frente da face da carcaça (que vai até z = 0,005)
-      carcaca.add(sup);
+      // Vidro embutido na carcaça (a face da carcaça fica em z ≈ 0,005)
+      const emb = espelhoEmbutido(0.21, 0.122, 0.035, 0.013, 0.005);
+      const sup = new THREE.Mesh(emb.vidro, espelhoMat());
+      carcaca.add(sup, new THREE.Mesh(emb.moldura, plastico));
       this.grupo.add(carcaca);
       const pt = new THREE.Object3D();
       // Fora da carroceria (senão a câmera fica dentro da lataria e só vê preto)
@@ -1111,9 +1151,9 @@ export class VisualCarro {
       casca.applyMatrix4(g.matrix);
       this.lote(plastico, casca);
       this.lote(plastico, barra(v3(0, Y(1.335), 0.0), v3(0, Y(topo(0.04) - 0.02), 0.04), 0.009, 0.014, 8));
-      espCentro = new THREE.Mesh(new THREE.PlaneGeometry(0.27, 0.07), espelhoMat());
-      espCentro.position.z = 0.0025;
-      g.add(espCentro);
+      const embC = espelhoEmbutido(0.262, 0.066, 0.022, 0.011, 0.0015, 0.008);
+      espCentro = new THREE.Mesh(embC.vidro, espelhoMat());
+      g.add(espCentro, new THREE.Mesh(embC.moldura, plastico));
       this.grupo.add(g);
       ptCentro = new THREE.Object3D();
       ptCentro.position.set(0, Y(1.315), -0.02);

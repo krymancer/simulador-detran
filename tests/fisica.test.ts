@@ -220,4 +220,29 @@ for (const cfg of [KWID, MOBI]) describe(`física: ${cfg.nome}`, () => {
     expect(raio).toBeGreaterThan(3.2);
     expect(raio).toBeLessThan(5.5);
   });
+
+  it('curva rápida com volante brusco: rola pouco e nenhuma roda sai do chão', () => {
+    const sim = mapaTeste();
+    rodar(sim, 1, () => ({}));
+    const v = 40 / 3.6;
+    sim.carro.corpo.setLinvel({ x: 0, y: 0, z: v }, true);
+    sim.carro.trem.omegaRoda.fill(v / cfgAtual.roda.raio);
+    let minFz = Infinity;
+    let maxRolagem = 0;
+    rodar(
+      sim,
+      4,
+      (t) => ({ volante: Math.min(0.4, t / 0.15 * 0.4), embreagem: 1, freioDeMao: false }),
+      (t) => {
+        if (t < 0.2) return;
+        minFz = Math.min(minFz, ...sim.carro.rodas.map((r) => (r.noChao ? r.fz : 0)));
+        const q = sim.carro.corpo.rotation();
+        const cima = new THREE.Vector3(0, 1, 0).applyQuaternion(new THREE.Quaternion(q.x, q.y, q.z, q.w));
+        maxRolagem = Math.max(maxRolagem, (Math.acos(Math.min(1, cima.y)) * 180) / Math.PI);
+      },
+    );
+    console.log('curva brusca: Fz mín', minFz.toFixed(0), 'N, inclinação máx', maxRolagem.toFixed(1), '°');
+    expect(minFz).toBeGreaterThan(200);
+    expect(maxRolagem).toBeLessThan(6);
+  });
 });
