@@ -52,6 +52,7 @@ export class Prova {
   private readonly sim: Simulacao;
   private contato = new Set<Obstaculo>();
   private naCalcada = false;
+  private foraCalcadaTempo = 0;
   private cintoAvaliado = false;
   private setaAvaliada = false;
   private ultimoTempoSeta = -999;
@@ -203,8 +204,15 @@ export class Prova {
 
     // Calçada
     const naCalcada = carro.rodas.some((r) => r.noChao && r.colisorChao !== null && sim.tipoColisor.get(r.colisorChao) === 'calcada');
-    if (naCalcada && !this.naCalcada) this.falta('subiu_calcada');
-    this.naCalcada = naCalcada;
+    // Uma falta por subida: só rearma depois de 1,5 s com as quatro rodas fora da calçada.
+    if (naCalcada) {
+      if (!this.naCalcada) this.falta('subiu_calcada');
+      this.naCalcada = true;
+      this.foraCalcadaTempo = 0;
+    } else if (this.naCalcada) {
+      this.foraCalcadaTempo += dt;
+      if (this.foraCalcadaTempo > 1.5) this.naCalcada = false;
+    }
 
     // Balizas e cones
     for (const o of sim.mapa.obstaculos) {

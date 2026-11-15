@@ -469,15 +469,15 @@ float janela(float m) {
   float h = vPosL.y + CG;
   float z = vPosL.z;
   float mv = m * 1.4;
-  if (vV > 0.5 - mv && vV < 0.772 + mv && h > cintura(z) + 0.012 - m) {
+  if (vV > 0.5 - mv && vV < 0.748 + mv && h > cintura(z) + 0.012 - m) {
     if (z < zPara(h) - 0.012 + m && z > zFimDLO(h) - m) {
       if (abs(z - ZB) < 0.045 - m) return 0.0;
       if (abs(z - ZC) < 0.016 - m) return 0.0;
       return 1.0;
     }
   }
-  if (vV > 0.785 - mv) {
-    if (z < 0.70 + m && z > -0.065 - m) return 1.0;
+  if (vV > 0.815 - mv) {
+    if (z < 0.66 + m && z > -0.065 - m) return 1.0;
     if (z < -1.775 + m && z > -1.905 - m) return 1.0;
   }
   return 0.0;
@@ -909,29 +909,30 @@ export class VisualCarro {
     this.lote(plastico, transformar(new RoundedBoxGeometry(0.05, 0.03, 0.08, 2, 0.012), v3(0, Y(1.485), -1.5)));
 
     // ------------------------------------------------------------ retrovisores externos
-    const zEsp = 0.6, hEsp = 1.03;
-    const espelhoMat = () => new THREE.MeshBasicMaterial({ color: 0xd9dee3, map: null });
+    const zEsp = 0.44, hEsp = 1.04;
+    const espelhoMat = () => new THREE.MeshBasicMaterial({ color: 0xffffff, map: null });
     const pontos = {} as { esq: THREE.Object3D; dir: THREE.Object3D };
     const superficies = {} as { esq: THREE.Mesh; dir: THREE.Mesh };
     for (const lado of [1, -1]) {
-      const xEsp = lado * 0.9;
+      const xEsp = lado * 0.96;
       const guinadaVidro = lado > 0 ? 0.2 : -0.36;
       const carcaca = new THREE.Group();
       carcaca.position.set(xEsp, Y(hEsp), zEsp);
       carcaca.rotation.set(0, Math.PI + guinadaVidro, 0);
       carcaca.updateMatrix();
-      const casca = new RoundedBoxGeometry(0.19, 0.115, 0.085, 2, 0.035);
+      const casca = new RoundedBoxGeometry(0.25, 0.155, 0.09, 2, 0.04);
       casca.translate(0, 0, -0.04);
       casca.applyMatrix4(carcaca.matrix);
       this.lote(plastico, casca);
-      this.lote(plastico, barra(v3(lado * 0.77, Y(0.985), 0.6), v3(lado * 0.84, Y(1.0), 0.61), 0.022, 0.018, 8));
-      const sup = new THREE.Mesh(new THREE.PlaneGeometry(0.165, 0.093), espelhoMat());
-      sup.position.set(0, 0, 0.0035);
+      this.lote(plastico, barra(v3(lado * 0.77, Y(0.985), zEsp), v3(lado * 0.88, Y(1.0), zEsp + 0.01), 0.022, 0.018, 8));
+      const sup = new THREE.Mesh(new THREE.PlaneGeometry(0.225, 0.13), espelhoMat());
+      sup.position.set(0, 0, 0.008); // à frente da face da carcaça (que vai até z = 0,005)
       carcaca.add(sup);
       this.grupo.add(carcaca);
       const pt = new THREE.Object3D();
-      pt.position.set(xEsp, Y(hEsp), zEsp - 0.01);
-      pt.rotation.y = Math.PI - lado * 0.12; // olhando para trás e um pouco para fora
+      // Fora da carroceria (senão a câmera fica dentro da lataria e só vê preto)
+      pt.position.set(xEsp + lado * 0.06, Y(hEsp), zEsp - 0.05);
+      pt.rotation.y = Math.PI - lado * 0.36; // olhando para trás e para fora (o carro ocupa só a borda, como num espelho bem regulado)
       this.grupo.add(pt);
       if (lado > 0) { pontos.esq = pt; superficies.esq = sup; } else { pontos.dir = pt; superficies.dir = sup; }
     }
@@ -1105,18 +1106,18 @@ export class VisualCarro {
       g.position.set(0, Y(1.315), -0.01);
       g.rotation.set(0.08, Math.PI - 0.19, 0, 'YXZ');
       g.updateMatrix();
-      const casca = new RoundedBoxGeometry(0.23, 0.07, 0.035, 2, 0.015);
+      const casca = new RoundedBoxGeometry(0.29, 0.088, 0.035, 2, 0.018);
       casca.translate(0, 0, -0.016);
       casca.applyMatrix4(g.matrix);
       this.lote(plastico, casca);
       this.lote(plastico, barra(v3(0, Y(1.335), 0.0), v3(0, Y(topo(0.04) - 0.02), 0.04), 0.009, 0.014, 8));
-      espCentro = new THREE.Mesh(new THREE.PlaneGeometry(0.212, 0.054), espelhoMat());
+      espCentro = new THREE.Mesh(new THREE.PlaneGeometry(0.27, 0.07), espelhoMat());
       espCentro.position.z = 0.0025;
       g.add(espCentro);
       this.grupo.add(g);
       ptCentro = new THREE.Object3D();
       ptCentro.position.set(0, Y(1.315), -0.02);
-      ptCentro.rotation.set(0.05, Math.PI, 0, 'YXZ');
+      ptCentro.rotation.set(-0.07, Math.PI, 0, 'YXZ'); // mira o vidro traseiro, não o banco
       this.grupo.add(ptCentro);
     }
     this.retrovisores = { centro: ptCentro, esq: pontos.esq, dir: pontos.dir };
@@ -1461,16 +1462,20 @@ export class VisualCarro {
     // volante: + = horário visto pelo motorista (direita)
     this.volante.rotation.set(VOLANTE_INCL, 0, 0);
     this.volante.rotateZ(v.anguloVolante);
-    // mãos acompanham até ~100°, depois "escorregam" no aro
+    // Mão sobre mão: as mãos acompanham o aro até ±90° e então “trocam de pegada”
+    // (como o motorista faz), voltando para perto de 9 e 3 h. Assim nunca cruzam a tela.
+    const a = v.anguloVolante;
+    const pegada = a - Math.PI * Math.round(a / Math.PI);
     this.maos.rotation.set(VOLANTE_INCL, 0, 0);
-    this.maos.rotateZ(clamp(v.anguloVolante, -1.75, 1.75));
+    this.maos.rotateZ(clamp(pegada, -1.3, 1.3));
     this.maos.updateMatrix();
     for (let k = 0; k < 2; k++) {
       const p = _p.copy(this.punhos[k]).applyMatrix4(this.maos.matrix);
       const d = _d.copy(this.cotovelos[k]).sub(p);
       const m = this.antebracos[k];
       m.position.copy(p);
-      m.scale.set(1, d.length(), 1);
+      // antebraço curto, apontando para o cotovelo (o resto do braço fica fora da vista)
+      m.scale.set(1, Math.min(0.24, d.length()), 1);
       m.quaternion.setFromUnitVectors(_cima, d.normalize());
     }
     this.motorista.visible = !e.cockpit;
