@@ -245,6 +245,8 @@ export class Entrada {
 
   /** Enquanto a calibração está aberta, o jogo não lê nada. */
   pausado = false;
+  /** Multiplica a velocidade de giro do volante no controle/teclado (opções). */
+  sensibilidade = 1;
 
   constructor() {
     window.addEventListener('keydown', (e) => {
@@ -346,7 +348,7 @@ export class Entrada {
 
       // Controle: volante com taxa limitada (simula girar o volante com as mãos)
       if (volanteControle !== null) {
-        const taxa = 2.5 * dt;
+        const taxa = 2.5 * this.sensibilidade * dt;
         this.controleVolante += Math.max(-taxa, Math.min(taxa, volanteControle - this.controleVolante));
         if (Math.abs(this.controleVolante) > Math.abs(volante)) volante = this.controleVolante;
       }
@@ -354,7 +356,7 @@ export class Entrada {
       // --- Teclado ---
       const k = (...c: string[]) => c.some((x) => this.teclas.has(x));
       const alvoV = (k('ArrowRight', 'KeyD') ? 1 : 0) - (k('ArrowLeft', 'KeyA') ? 1 : 0);
-      const taxaV = (alvoV === 0 ? 2.5 : 1.6) * dt;
+      const taxaV = (alvoV === 0 ? 2.5 : 1.6) * this.sensibilidade * dt;
       this.tecladoVolante += Math.max(-taxaV, Math.min(taxaV, alvoV - this.tecladoVolante));
       const rampa = (atual: number, alvo: number, sobe: number, desce: number) =>
         alvo > atual ? Math.min(alvo, atual + sobe * dt) : Math.max(alvo, atual - desce * dt);

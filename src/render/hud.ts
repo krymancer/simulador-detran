@@ -214,12 +214,12 @@ export class Hud {
       const t = tempo - prova.tempoInicio;
       r.status.textContent = `Em andamento · ${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
     }
-    r.pontos.textContent = `Pontos: ${prova.pontos} / ${LIMITE_PONTOS}${prova.eliminado ? ' · ELIMINADO' : ''}`;
+    r.pontos.textContent = `Pontos: ${prova.pontos} / ${LIMITE_PONTOS}${prova.eliminado ? ' · PROVA INTERROMPIDA' : ''}`;
     if (prova.balizaConcluida !== null) r.baliza.textContent = `Baliza: concluída em ${prova.balizaConcluida.toFixed(0)} s`;
     else if (prova.balizaInicio !== null) r.baliza.textContent = `Baliza: ${(tempo - prova.balizaInicio).toFixed(0)} s`;
     else r.baliza.textContent = '';
     const html = prova.faltas
-      .map((f) => `<li class="${f.gravidade}">${f.descricao} <small>${f.gravidade === 'eliminatoria' ? 'elim.' : `${f.gravidade} ${PONTOS[f.gravidade]}pt`}</small></li>`)
+      .map((f) => `<li class="${f.gravidade}">${f.descricao} <small>${f.gravidade === 'eliminatoria' ? 'interrompe' : `${f.gravidade === 'gravissima' ? 'gravíssima' : f.gravidade === 'media' ? 'média' : f.gravidade} ${PONTOS[f.gravidade]}pt`}</small></li>`)
       .join('');
     if (r.faltas.innerHTML !== html) r.faltas.innerHTML = html;
 

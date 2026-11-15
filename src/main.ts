@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import './style.css';
-import { MOBI } from './sim/carConfig';
+import { CarConfig, KWID, MOBI } from './sim/carConfig';
 import { Comandos } from './sim/powertrain';
 import { DT_FISICA, iniciarRapier, Simulacao } from './sim/simulation';
 import { lerMapa, Mapa } from './world/parser';
@@ -16,11 +16,16 @@ import { Calibracao } from './input/calibration';
 import { Hud } from './render/hud';
 import { VisualCarro } from './render/carVisual';
 import { Retrovisores } from './render/mirrors';
-import { SomMotor } from './audio/engineSound';
+import { SomCarro } from './audio/somCarro';
+import { Opcoes, Config } from './render/opcoes';
+import { Examinador } from './exam/examinador';
+import { UiExaminador } from './render/examinadorUi';
+import { mostrarRelatorio } from './render/relatorio';
+import { Trafego } from './world/trafego';
 
 type ModoCamera = 'cockpit' | 'externa' | 'cima';
 const MODOS: ModoCamera[] = ['cockpit', 'externa', 'cima'];
-const CARRO = MOBI;
+let CARRO: CarConfig = MOBI;
 
 const app = document.getElementById('app')!;
 
@@ -46,7 +51,50 @@ window.addEventListener('resize', () => {
 const entrada = new Entrada();
 const hud = new Hud(app);
 const calibracao = new Calibracao(entrada, app);
-const som = new SomMotor();
+let som = new SomCarro({ rpmMarchaLenta: MOBI.motor.rpmMarchaLenta, rpmCorte: MOBI.motor.rpmCorte });
+const opcoes = new Opcoes(app);
+const uiExaminador = new UiExaminador(app);
+CARRO = opcoes.valores.carro === 'kwid' ? KWID : MOBI;
+som = new SomCarro({ rpmMarchaLenta: CARRO.motor.rpmMarchaLenta, rpmCorte: CARRO.motor.rpmCorte });
+som.volume = opcoes.valores.volume;
+
+function aplicarQualidade(c: Config): void {
+  const dpr = window.devicePixelRatio || 1;
+  renderer.setPixelRatio(c.qualidade === 'baixa' ? Math.min(dpr, 1) * 0.75 : c.qualidade === 'media' ? Math.min(dpr, 1.25) : Math.min(dpr, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  ceu.sol.castShadow = c.qualidade !== 'baixa';
+  const tam = c.qualidade === 'alta' ? 2048 : 1024;
+  if (ceu.sol.shadow.mapSize.x !== tam) {
+    ceu.sol.shadow.mapSize.set(tam, tam);
+    ceu.sol.shadow.map?.dispose();
+    ceu.sol.shadow.map = null;
+  }
+  if (jogo) jogo.espelhos.intervaloLaterais = c.qualidade === 'alta' ? 2 : c.qualidade === 'media' ? 3 : 4;
+  entrada.sensibilidade = c.sensibilidade;
+  som.volume = c.volume;
+}
+opcoes.aoMudar((c, antes) => {
+  aplicarQualidade(c);
+  if (jogo?.examinador) jogo.examinador.voz = c.vozExaminador;
+  if (c.examinador !== antes.examinador && jogo) {
+    jogo.examinador = c.examinador && jogo.mapa.raiz.name === 'autoescola'
+      ? new Examinador(jogo.sim, jogo.prova, { voz: c.vozExaminador })
+      : null;
+  }
+  if ((c.trafego !== antes.trafego || c.pedestres !== antes.pedestres) && jogo) {
+    removerTrafego();
+    jogo.trafego = criarTrafego(jogo.sim, jogo.mapa, c);
+  }
+  if (c.carro !== antes.carro && jogo) {
+    CARRO = c.carro === 'kwid' ? KWID : MOBI;
+    carregarMapa(jogo.mapa.raiz);
+    // motor diferente: refaz o som (precisa de um gesto do usuário, que é o clique no menu)
+    som.volume = 0; // silencia o som do motor anterior
+    som = new SomCarro({ rpmMarchaLenta: CARRO.motor.rpmMarchaLenta, rpmCorte: CARRO.motor.rpmCorte });
+    som.volume = c.volume;
+    som.iniciar();
+  }
+});
 
 interface Jogo {
   mapa: Mapa;
@@ -56,6 +104,23 @@ interface Jogo {
   espelhos: Retrovisores;
   lampadas: { luzes: Record<CorSemaforo, THREE.MeshStandardMaterial>; sem: Mapa['semaforos'][number] }[];
   obstaculoMat: Map<object, THREE.MeshStandardMaterial[]>;
+  examinador: Examinador | null;
+  relatorioMostrado: boolean;
+  trafego: Trafego | null;
+}
+
+function criarTrafego(sim: Simulacao, mapa: Mapa, c: Config): Trafego | null {
+  if (mapa.raiz.name !== 'autoescola' || (!c.trafego && !c.pedestres)) return null;
+  const t = new Trafego(sim, { carros: c.trafego ? 6 : 0, pedestres: c.pedestres ? 6 : 0 });
+  cena.add(t.grupo);
+  return t;
+}
+
+function removerTrafego(): void {
+  if (!jogo?.trafego) return;
+  cena.remove(jogo.trafego.grupo);
+  jogo.trafego.liberar();
+  jogo.trafego = null;
 }
 let jogo: Jogo | null = null;
 
@@ -76,6 +141,7 @@ function montarSemaforos(mapa: Mapa): Jogo['lampadas'] {
       }
       luzes[nome] = m;
     }
+    caixa.name = 'luzes_semaforo';
     mapa.raiz.add(caixa);
     out.push({ luzes, sem: s });
   }
@@ -84,6 +150,7 @@ function montarSemaforos(mapa: Mapa): Jogo['lampadas'] {
 
 function carregarMapa(raiz: THREE.Object3D): void {
   if (jogo) {
+    removerTrafego();
     cena.remove(jogo.mapa.raiz, jogo.visual.grupo);
     jogo.sim.liberar();
   }
@@ -91,6 +158,8 @@ function carregarMapa(raiz: THREE.Object3D): void {
     const m = o as THREE.Mesh;
     if (m.isMesh) m.receiveShadow = true;
   });
+  // Remove luzes de semáforo de uma carga anterior do mesmo mapa (troca de carro).
+  raiz.children.filter((c) => c.name === 'luzes_semaforo').forEach((c) => raiz.remove(c));
   const mapa = lerMapa(raiz);
   cena.add(raiz);
   const sim = new Simulacao(mapa, CARRO);
@@ -111,10 +180,15 @@ function carregarMapa(raiz: THREE.Object3D): void {
     obstaculoMat.set(o, mats);
   }
 
+  const prova = new Prova(sim);
+  const ehAutoescola = raiz.name === 'autoescola';
   jogo = {
     mapa,
     sim,
-    prova: new Prova(sim),
+    prova,
+    examinador: ehAutoescola && opcoes.valores.examinador ? new Examinador(sim, prova, { voz: opcoes.valores.vozExaminador }) : null,
+    relatorioMostrado: false,
+    trafego: criarTrafego(sim, mapa, opcoes.valores),
     visual,
     espelhos: new Retrovisores(visual.retrovisores, visual.espelhos),
     lampadas: montarSemaforos(mapa),
@@ -123,13 +197,17 @@ function carregarMapa(raiz: THREE.Object3D): void {
   entrada.reiniciarCabine();
   hud.reiniciar();
   camIniciada = false;
+  aplicarQualidade(opcoes.valores);
 }
 
 function reiniciarCarro(): void {
   if (!jogo) return;
   jogo.sim.reposicionar();
   jogo.sim.reporObstaculos();
+  jogo.trafego?.reiniciar();
   jogo.prova = new Prova(jogo.sim);
+  jogo.examinador?.reiniciar(jogo.prova);
+  jogo.relatorioMostrado = false;
   for (const mats of jogo.obstaculoMat.values()) for (const m of mats) m.emissive?.setHex(0);
   entrada.reiniciarCabine();
   hud.reiniciar();
@@ -192,7 +270,7 @@ function atualizarCamera(dt: number, olharEntrada: number, olharTras: boolean): 
     camera.position.add(new THREE.Vector3(-0.2, 0.07, -0.08).multiplyScalar(olhar.tras).applyQuaternion(camera.quaternion));
     camera.rotateY(Math.PI + olhar.yawSuave); // câmera olha para −Z; carro aponta +Z
     camera.rotateX(-0.06 + olhar.pitch);
-    camera.fov = 68;
+    camera.fov = opcoes.valores.fov;
   } else {
     const frente = new THREE.Vector3(0, 0, 1).applyQuaternion(g.quaternion);
     frente.y = 0;
@@ -216,7 +294,11 @@ function atualizarCamera(dt: number, olharEntrada: number, olharTras: boolean): 
 let ajudaAberta = false;
 const ajuda = document.getElementById('ajuda')!;
 window.addEventListener('keydown', (e) => {
-  if (e.code === 'F2') {
+  if (e.code === 'KeyO' && !calibracao.estaAberta) {
+    e.preventDefault();
+    if (opcoes.estaAberta) opcoes.fechar();
+    else opcoes.abrir();
+  } else if (e.code === 'F2') {
     e.preventDefault();
     if (calibracao.estaAberta) calibracao.fechar();
     else calibracao.abrir();
@@ -232,10 +314,20 @@ let acumulador = 0;
 let ultimo = performance.now();
 let bloqueiaPartida = false;
 let piscandoAnterior = false;
+// Estado anterior para disparar os sons de eventos (bordas)
+const anterior = { marcha: 0, freioDeMao: true, cinto: false, naCalcada: false, vel: new THREE.Vector3() };
+
+/** Volante físico → volante do carro: 1:1 em graus, ou o curso todo até o batente. */
+function volanteDoCarro(ent: EstadoEntrada): number {
+  const c = opcoes.valores;
+  if (!ent.temVolante || !c.volante1para1) return ent.volante;
+  const batenteCarro = CARRO.direcao.voltasBatenteABatente * 360;
+  return Math.max(-1, Math.min(1, (ent.volante * c.rotacaoVolante) / batenteCarro));
+}
 
 function comandosDe(ent: EstadoEntrada, desligar: boolean): Comandos {
   return {
-    volante: ent.volante,
+    volante: volanteDoCarro(ent),
     acelerador: ent.acelerador,
     freio: ent.freio,
     embreagem: ent.embreagem,
@@ -252,6 +344,7 @@ function quadro(agora: number): void {
   ultimo = agora;
   if (!jogo) return;
 
+  entrada.pausado = calibracao.estaAberta || opcoes.estaAberta;
   const ent = entrada.ler(dt);
   const trem = jogo.sim.carro.trem;
 
@@ -268,22 +361,26 @@ function quadro(agora: number): void {
   if (ent.bordas.has('encerrar')) jogo.prova.encerrar();
 
   const cabine = { seta: ent.seta, cinto: ent.cinto };
-  if (!calibracao.estaAberta) {
+  if (!calibracao.estaAberta && !opcoes.estaAberta) {
     acumulador += dt;
     let primeiro = true;
     while (acumulador >= DT_FISICA) {
       const cmd = comandosDe(ent, desligar && primeiro);
       primeiro = false;
+      jogo.trafego?.passo(DT_FISICA);
       jogo.sim.passo(cmd);
       const eventos = trem.eventos.splice(0);
-      jogo.prova.atualizar(DT_FISICA, cmd, cabine, eventos);
+      for (const ev of eventos) som.evento(ev);
+      const info = jogo.trafego?.info();
+      if (info?.eventos.includes('colisao_carro')) som.evento('batida', 0.8);
+      jogo.prova.atualizar(DT_FISICA, cmd, cabine, eventos, info);
       acumulador -= DT_FISICA;
     }
   }
 
   const t = jogo.sim.tempo;
   const piscando = Math.floor(t * 2.7) % 2 === 0;
-  if ((ent.seta || ent.alerta) && piscando !== piscandoAnterior) som.clique();
+  if ((ent.seta || ent.alerta) && piscando !== piscandoAnterior) som.evento('seta');
   piscandoAnterior = piscando;
 
   // Visual
@@ -313,11 +410,64 @@ function quadro(agora: number): void {
   }
   for (const o of jogo.prova.obstaculosTocados) for (const m of jogo.obstaculoMat.get(o) ?? []) m.emissive?.setHex(0x880000);
 
+  jogo.trafego?.atualizarVisual(dt);
   ceu.atualizarSombra(jogo.visual.grupo.position);
   atualizarCamera(dt, ent.olhar, ent.olharTras);
-  som.atualizar(trem.rpm, trem.aceleradorEfetivo, trem.ligado, ent.partida && !bloqueiaPartida, CARRO.motor.cilindros);
+  // Som
+  {
+    const carro = jogo.sim.carro;
+    if (trem.marchaEngatada !== anterior.marcha && trem.marchaEngatada !== 0) som.evento('marcha');
+    anterior.marcha = trem.marchaEngatada;
+    if (ent.freioDeMao !== anterior.freioDeMao) som.evento('freioDeMao');
+    anterior.freioDeMao = ent.freioDeMao;
+    if (ent.cinto !== anterior.cinto) som.evento('cinto');
+    anterior.cinto = ent.cinto;
+    let esc = 0;
+    let naCalcada = false;
+    carro.rodas.forEach((r, i) => {
+      if (!r.noChao) return;
+      esc = Math.max(esc, Math.hypot(trem.omegaRoda[i] * CARRO.roda.raio - r.vx, r.vy));
+      if (r.colisorChao !== null && jogo!.sim.tipoColisor.get(r.colisorChao) === 'calcada') naCalcada = true;
+    });
+    const lv = carro.corpo.linvel();
+    const v = new THREE.Vector3(lv.x, lv.y, lv.z);
+    if (naCalcada && !anterior.naCalcada) som.evento('meioFio', Math.min(1, v.length() / 6));
+    anterior.naCalcada = naCalcada;
+    // Batida: mudança brusca de velocidade (bem acima do que os freios conseguem)
+    const dv = v.distanceTo(anterior.vel);
+    if (dt > 0 && dv / dt > 25 && dv > 0.8) som.evento('batida', Math.min(1, dv / 6));
+    anterior.vel.copy(v);
+    som.atualizar(dt, {
+      rpm: trem.rpm,
+      carga: trem.aceleradorEfetivo,
+      ligado: trem.ligado,
+      partida: ent.partida && !bloqueiaPartida && !trem.ligado,
+      ignicao: trem.ignicao || trem.ligado,
+      velocidade: v.length(),
+      escorregamento: esc,
+      freio: ent.freio,
+      embreagem: ent.embreagem,
+      marcha: trem.marchaEngatada,
+      cockpit: modoCamera === 'cockpit',
+    });
+  }
 
   hud.atualizar(jogo.sim.carro, ent, jogo.prova, t, piscando, modoCamera, dt);
+  if (jogo.examinador) {
+    jogo.examinador.atualizar(dt);
+    uiExaminador.atualizar(jogo.examinador);
+  } else {
+    uiExaminador.ocultar();
+  }
+  // Fim da prova → relatório
+  if (jogo.prova.encerrada && !jogo.relatorioMostrado) {
+    jogo.relatorioMostrado = true;
+    mostrarRelatorio(app, jogo.prova, {
+      urlMapa: urlChao,
+      onNovaProva: () => reiniciarCarro(),
+      onFechar: () => {},
+    });
+  }
   const faltando = entrada.semCalibracao();
   hud.avisoCalibracao(faltando.length ? `“${faltando[0].id.slice(0, 40)}” não tem mapeamento conhecido — configure em F2` : null);
 
@@ -352,6 +502,7 @@ async function iniciar(): Promise<void> {
     fecharInicio();
     calibracao.abrir();
   };
+  inicio.querySelector<HTMLButtonElement>('[data-acao="opcoes"]')!.onclick = () => opcoes.abrir();
   inicio.querySelector<HTMLButtonElement>('[data-acao="treino"]')!.onclick = () => {
     fecharInicio();
     carregarMapa(criarMapaTeste());

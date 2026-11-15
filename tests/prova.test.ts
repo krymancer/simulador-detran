@@ -105,7 +105,7 @@ describe('mapa da autoescola (planta)', () => {
     expect(sim.carro.velocidade()).toBeLessThan(0.05);
   });
 
-  it('bater numa baliza derruba e é eliminatória', async () => {
+  it('bater numa baliza derruba e soma pontos até reprovar', async () => {
     const { criarMapaAutoescola } = await import('../src/world/autoescola');
     const mapa = lerMapa(criarMapaAutoescola());
     const baliza = mapa.obstaculos.find((o) => o.tipo === 'baliza')!;
@@ -126,5 +126,21 @@ describe('mapa da autoescola (planta)', () => {
     expect(codigos).toContain('tocou_baliza');
     expect(codigos).toContain('derrubou_baliza');
     expect(prova.aprovado).toBe(false);
+  });
+});
+
+describe('faixas da pista (vias)', () => {
+  it('o carro no spawn está perto de uma faixa só depois de sair da vaga; o sentido do anel interno é horário', async () => {
+    const { FAIXAS, faixaPorId, amostrar, projetar } = await import('../src/world/vias');
+    expect(FAIXAS.map((f) => f.id)).toEqual(['anel_interno', 'anel_externo', 'diagonal_1', 'diagonal_2', 'diagonal_3']);
+    const anel = faixaPorId('anel_interno');
+    expect(anel.comprimento).toBeGreaterThan(150);
+    // ponto 10 m adiante projetado de volta cai no mesmo lugar
+    const a = amostrar(anel, 10);
+    const pr = projetar(anel, a.ponto);
+    expect(Math.abs(pr.s - 10)).toBeLessThan(0.5);
+    expect(pr.distancia).toBeLessThan(0.05);
+    // diagonal anda para −Z (subindo na planta)
+    expect(amostrar(faixaPorId('diagonal_2'), 5).direcao.z).toBeLessThan(-0.5);
   });
 });

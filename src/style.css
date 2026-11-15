@@ -54,6 +54,7 @@ button:hover { background: #364151; }
 .prova li { margin: 3px 0; }
 .prova li small { color: var(--sub); }
 .prova li.eliminatoria { color: var(--ruim); font-weight: 700; }
+.prova li.gravissima { color: #ff6b6b; }
 .prova li.grave { color: #ff8a65; }
 .ok { color: var(--ok); }
 .ruim { color: var(--ruim); }
@@ -98,3 +99,12 @@ button:hover { background: #364151; }
 .medidor { position: relative; width: 110px; height: 8px; background: #222a33; border-radius: 4px; overflow: hidden; }
 .medidor i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--acento); }
 .medidor.centro::after { content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: #fff6; }
+
+.opcoes { left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(620px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; }
+.opcoes h3 { margin: 14px 0 6px; }
+.opcoes .campos { display: flex; flex-direction: column; gap: 6px; }
+.opcoes .campo { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; font-size: 14px; }
+.opcoes .campo small { display: block; color: var(--sub); font-size: 12px; }
+.opcoes .ctrl { display: flex; align-items: center; gap: 8px; }
+.opcoes output { min-width: 48px; text-align: right; font-variant-numeric: tabular-nums; color: var(--sub); }
+.opcoes select, .opcoes input[type=range] { background: #222a33; color: var(--texto); border: 1px solid var(--borda); border-radius: 6px; padding: 4px; }

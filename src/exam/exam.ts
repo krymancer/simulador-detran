@@ -2,7 +2,23 @@ import * as THREE from 'three';
 import { Simulacao } from '../sim/simulation';
 import { Comandos, EventoTrem } from '../sim/powertrain';
 import { dentroDaZona, Obstaculo, Semaforo, Zona } from '../world/parser';
-import { CodigoFalta, LIMITE_PONTOS, PONTOS, REGRAS, TEMPO_BALIZA } from './regras';
+import type { InfoTrafego } from '../world/infoTrafego';
+import { Faixa, projetar } from '../world/vias';
+import { Pista } from './pista';
+import {
+  CodigoFalta,
+  DESACELERACAO_BRUSCA,
+  Gravidade,
+  LIMITE_PONTOS,
+  PONTOS,
+  REGRAS,
+  ROTULO_GRAVIDADE,
+  RPM_EXCESSIVA,
+  TEMPO_BALIZA,
+  TEMPO_RPM_EXCESSIVA,
+  VELOCIDADE_MAXIMA,
+  VELOCIDADE_MAXIMA_KMH,
+} from './regras';
 
 export type CorSemaforo = 'verde' | 'amarelo' | 'vermelho';
 
@@ -18,8 +34,25 @@ export function corSemaforo(s: Semaforo, t: number): CorSemaforo {
 export interface Falta {
   codigo: CodigoFalta;
   descricao: string;
-  gravidade: (typeof REGRAS)[CodigoFalta]['gravidade'];
+  gravidade: Gravidade;
+  /** Tempo da simulação (s). Para o relógio da prova use `tempo - prova.tempoInicio`. */
   tempo: number;
+  /** Onde o carro estava (mundo, plano XZ). */
+  posicao: { x: number; z: number };
+}
+
+/** Amostra da trajetória (a cada ~0,5 s). */
+export interface PontoTrajetoria {
+  t: number;
+  x: number;
+  z: number;
+  /** Velocidade (m/s). */
+  v: number;
+}
+
+export interface OpcoesProva {
+  /** Faixas para as regras de trânsito (contramão, seta, linha divisória). Padrão: as da autoescola, só nesse mapa. */
+  faixas?: Faixa[];
 }
 
 export interface Mensagem {
@@ -72,8 +105,54 @@ export class Prova {
   private balizaEstourou = false;
   private balizaParadoTempo = 0;
 
-  constructor(sim: Simulacao) {
+  /** Tempo da simulação em que a prova terminou (null = em andamento). */
+  tempoFim: number | null = null;
+  readonly trajetoria: PontoTrajetoria[] = [];
+  readonly pista: Pista;
+
+  private ultimaAmostra = -999;
+  private ultimaSetaLado = { esquerda: -999, direita: -999 };
+  // excesso de velocidade
+  private acimaTempo = 0;
+  private abaixoTempo = 0;
+  private faltaVelocidade: Falta | null = null;
+  private vMaxEpisodio = 0;
+  // contramão
+  private contramaoTempo = 0;
+  private contramaoLivre = 0;
+  private contramaoMultada = false;
+  // linha divisória
+  private sobreLinha = false;
+  private foraLinhaTempo = 0;
+  // conversão sem seta
+  private faixaEstavel: { faixa: Faixa; desde: number; rumo: number; ultimoT: number } | null = null;
+  /** Rumo acumulado (sem dar a volta em ±π), para medir giros maiores que 180°. */
+  private rumoAcum = 0;
+  private rumoAnterior: number | null = null;
+  private faixaCandidata: { faixa: Faixa; desde: number } | null = null;
+  private percurso: { d: number; rumo: number; rumoVia: number | null; t: number }[] = [];
+  private distPercorrida = 0;
+  private ultimaConversao = -999;
+  // pedestres
+  private faixaPedInvadida = new Set<Zona>();
+  // freada brusca
+  private historicoV: { t: number; v: number }[] = [];
+  private freandoForte = false;
+  private freadaLivre = 0;
+  // rotação
+  private rpmTempo = 0;
+  private rpmLivre = 0;
+  private rpmMultada = false;
+
+  constructor(sim: Simulacao, opcoes: OpcoesProva = {}) {
     this.sim = sim;
+    this.pista = new Pista(sim.mapa, opcoes.faixas);
+  }
+
+  /** Duração da prova até agora (ou total, se encerrada), em s. */
+  get duracao(): number {
+    if (!this.iniciada) return 0;
+    return (this.tempoFim ?? this.sim.tempo) - this.tempoInicio;
   }
 
   get pontos(): number {
@@ -92,19 +171,40 @@ export class Prova {
     this.mensagens.push({ texto, tempo: this.sim.tempo, tipo });
   }
 
-  private falta(codigo: CodigoFalta): void {
-    if (!this.iniciada || this.encerrada) return;
+  /** Registra uma falta (também usada pelo examinador). Devolve a falta, ou null se a prova não está valendo. */
+  registrarFalta(codigo: CodigoFalta, extra: { gravidade?: Gravidade; descricao?: string } = {}): Falta | null {
+    if (!this.iniciada || this.encerrada) return null;
     const r = REGRAS[codigo];
-    this.faltas.push({ codigo, descricao: r.descricao, gravidade: r.gravidade, tempo: this.sim.tempo });
+    const t = this.sim.carro.corpo.translation();
+    const f: Falta = {
+      codigo,
+      descricao: extra.descricao ?? r.descricao,
+      gravidade: extra.gravidade ?? r.gravidade,
+      tempo: this.sim.tempo,
+      posicao: { x: t.x, z: t.z },
+    };
+    this.faltas.push(f);
+    this.avisarFalta(f);
+    return f;
+  }
+
+  private avisarFalta(f: Falta): void {
+    const el = f.gravidade === 'eliminatoria';
     this.avisar(
-      `${r.descricao} (${r.gravidade === 'eliminatoria' ? 'ELIMINATÓRIA' : `${r.gravidade}, ${PONTOS[r.gravidade]} pt`})`,
-      r.gravidade === 'eliminatoria' ? 'eliminatoria' : 'falta',
+      `${f.descricao} (${el ? 'PROVA INTERROMPIDA' : `${ROTULO_GRAVIDADE[f.gravidade]}, ${PONTOS[f.gravidade]} pt`})`,
+      el ? 'eliminatoria' : 'falta',
     );
+  }
+
+  private falta(codigo: CodigoFalta): void {
+    this.registrarFalta(codigo);
   }
 
   encerrar(): void {
     if (this.encerrada) return;
     this.encerrada = true;
+    this.tempoFim = this.sim.tempo;
+    this.amostrarTrajetoria(true);
     this.avisar(this.aprovado ? 'Prova encerrada: APROVADO' : 'Prova encerrada: REPROVADO', this.aprovado ? 'info' : 'eliminatoria');
   }
 
@@ -143,7 +243,15 @@ export class Prova {
     return Math.hypot(_p.x - cx, _p.z - cz) < o.raio;
   }
 
-  atualizar(dt: number, cmd: Comandos, cabine: Cabine, eventos: EventoTrem[]): void {
+  private amostrarTrajetoria(forcar = false): void {
+    const t = this.sim.tempo;
+    if (!forcar && t - this.ultimaAmostra < 0.5) return;
+    this.ultimaAmostra = t;
+    const p = this.sim.carro.corpo.translation();
+    this.trajetoria.push({ t, x: p.x, z: p.z, v: Math.abs(this.sim.carro.velocidadeLongitudinal()) });
+  }
+
+  atualizar(dt: number, cmd: Comandos, cabine: Cabine, eventos: EventoTrem[], trafego?: InfoTrafego): void {
     const sim = this.sim;
     const carro = sim.carro;
     const trem = carro.trem;
@@ -164,10 +272,25 @@ export class Prova {
         this.ultimoArranhou = t;
       }
     }
-    if (!this.iniciada || this.encerrada) return;
+    if (!this.iniciada || this.encerrada) {
+      if (trafego) trafego.eventos.length = 0;
+      return;
+    }
+    this.amostrarTrajetoria();
+
+    // Colisão / atropelamento (vêm do trânsito): o examinador interrompe a prova.
+    if (trafego && trafego.eventos.length) {
+      const evs = trafego.eventos.splice(0);
+      for (const e of evs) this.falta(e === 'atropelou_pedestre' ? 'atropelamento' : 'colisao');
+      this.encerrar();
+      return;
+    }
 
     // Seta / cinto na saída
-    if (cabine.seta) this.ultimoTempoSeta = t;
+    if (cabine.seta) {
+      this.ultimoTempoSeta = t;
+      this.ultimaSetaLado[cabine.seta] = t;
+    }
     if (!this.cintoAvaliado && vAbs > 0.5) {
       this.cintoAvaliado = true;
       if (!cabine.cinto) this.falta('sem_cinto');
@@ -303,5 +426,252 @@ export class Prova {
         }
       }
     }
+
+    this.regrasDeTransito(dt, cmd, g, v, trafego);
   }
+
+  // ---------------------------------------------------------------------------
+  // Regras de trânsito: velocidade, contramão, linha divisória, seta, pedestre,
+  // freada brusca, rotação.
+
+  private regrasDeTransito(dt: number, _cmd: Comandos, g: ReturnType<Prova['geometria']>, v: number, trafego?: InfoTrafego): void {
+    const sim = this.sim;
+    const t = sim.tempo;
+    const vAbs = Math.abs(v);
+    const lv = sim.carro.corpo.linvel();
+    const vel = new THREE.Vector3(lv.x, 0, lv.z);
+    const vPlano = vel.length();
+
+    // --- Excesso de velocidade (CTB art. 218): > limite por mais de 2 s; uma falta por
+    // episódio, que sobe de gravidade se o excesso aumentar (20 % / 50 %).
+    if (vAbs > VELOCIDADE_MAXIMA) {
+      this.acimaTempo += dt;
+      this.abaixoTempo = 0;
+      this.vMaxEpisodio = Math.max(this.vMaxEpisodio, vAbs);
+      if (this.acimaTempo > 2) {
+        const kmh = this.vMaxEpisodio * 3.6;
+        const exc = kmh / VELOCIDADE_MAXIMA_KMH - 1;
+        const grav: Gravidade = exc > 0.5 ? 'gravissima' : exc > 0.2 ? 'grave' : 'media';
+        const desc = `Excedeu a velocidade máxima de ${VELOCIDADE_MAXIMA_KMH} km/h (${kmh.toFixed(0)} km/h, CTB art. 218)`;
+        if (!this.faltaVelocidade) {
+          this.faltaVelocidade = this.registrarFalta('excesso_velocidade', { gravidade: grav, descricao: desc });
+        } else if (PONTOS[grav] > PONTOS[this.faltaVelocidade.gravidade]) {
+          this.faltaVelocidade.gravidade = grav;
+          this.faltaVelocidade.descricao = desc;
+          this.avisarFalta(this.faltaVelocidade);
+        }
+      }
+    } else if (vAbs < VELOCIDADE_MAXIMA - 1 / 3.6) {
+      this.abaixoTempo += dt;
+      this.acimaTempo = 0;
+      if (this.abaixoTempo > 1) {
+        this.faltaVelocidade = null;
+        this.vMaxEpisodio = 0;
+      }
+    }
+
+    // --- Rotação excessiva
+    const rpm = sim.carro.trem.rpm;
+    if (rpm > RPM_EXCESSIVA) {
+      this.rpmTempo += dt;
+      this.rpmLivre = 0;
+      if (this.rpmTempo > TEMPO_RPM_EXCESSIVA && !this.rpmMultada) {
+        this.rpmMultada = true;
+        this.falta('rotacao_excessiva');
+      }
+    } else if (rpm < RPM_EXCESSIVA - 500) {
+      this.rpmLivre += dt;
+      this.rpmTempo = 0;
+      if (this.rpmLivre > 1) this.rpmMultada = false;
+    }
+
+    // --- Freada brusca: desaceleração média nos últimos 0,3 s.
+    this.historicoV.push({ t, v });
+    while (this.historicoV.length > 2 && t - this.historicoV[0].t > 0.3) this.historicoV.shift();
+    const h0 = this.historicoV[0];
+    const desacel = t - h0.t > 0.2 ? (h0.v - v) / (t - h0.t) : 0;
+    if (desacel > DESACELERACAO_BRUSCA && h0.v > 2) {
+      if (!this.freandoForte) {
+        this.freandoForte = true;
+        if (!this.haMotivoParaFrear(g, trafego)) this.falta('freada_brusca');
+      }
+      this.freadaLivre = 0;
+    } else if (desacel < 2) {
+      this.freadaLivre += dt;
+      if (this.freadaLivre > 1) this.freandoForte = false;
+    }
+
+    // --- Pedestre na faixa
+    if (trafego) {
+      for (const z of sim.mapa.zonas) {
+        if (z.tipo !== 'faixa_pedestre') continue;
+        // cantos + linha central (o carro é mais comprido que a faixa: pode estar sobre ela com os cantos fora)
+        const sobre =
+          g.cantos.some((c) => dentroDaZona(z, c, _tmp)) ||
+          dentroDaZona(z, g.paraChoque, _tmp) ||
+          dentroDaZona(z, g.pos, _tmp) ||
+          dentroDaZona(z, _p.copy(g.pos).lerp(g.paraChoque, 0.5), _tmp) ||
+          dentroDaZona(z, _p.copy(g.pos).lerp(g.paraChoque, -0.6), _tmp);
+        if (!sobre) {
+          this.faixaPedInvadida.delete(z);
+          continue;
+        }
+        if (this.faixaPedInvadida.has(z) || vAbs < 0.5) continue;
+        const nome = z.nome.toUpperCase();
+        const temPedestre = trafego.pedestres.some((p) => p.naFaixa !== null && p.naFaixa.toUpperCase() === nome);
+        if (temPedestre) {
+          this.faixaPedInvadida.add(z);
+          this.falta('preferencia_pedestre');
+        }
+      }
+    }
+
+    if (!this.pista.ativa) return;
+    const pista = this.pista;
+    const leitura = pista.faixaEm(g.pos);
+    const balizaEmCurso = this.balizaInicio !== null && (this.balizaConcluida === null || t - (this.balizaInicio + this.balizaConcluida) < 8);
+    const pertoBaliza = sim.mapa.zonas.some((z) => z.tipo === 'baliza' && Math.hypot(g.pos.x - z.centro.x, g.pos.z - z.centro.z) < 14);
+
+    // --- Contramão: andando para a frente, contra o sentido da faixa, por mais de 1,5 s.
+    let naContramao = false;
+    let maoUnica = false;
+    if (leitura && leitura.confiavel && v > 0.5 && vPlano > 1) {
+      if (vel.normalize().dot(leitura.proj.direcao) < -0.5) {
+        naContramao = true;
+        maoUnica = leitura.proj.faixa.mao === 'unica';
+      }
+    }
+    if (naContramao) {
+      this.contramaoTempo += dt;
+      this.contramaoLivre = 0;
+      if (this.contramaoTempo > 1.5 && !this.contramaoMultada) {
+        this.contramaoMultada = true;
+        this.falta(maoUnica ? 'contramao_mao_unica' : 'contramao');
+      }
+    } else {
+      this.contramaoLivre += dt;
+      if (this.contramaoLivre > 2) {
+        this.contramaoTempo = 0;
+        this.contramaoMultada = false;
+      }
+    }
+
+    // --- Linha divisória do anel: um canto da carroceria passa do meio entre as duas faixas.
+    if (pista.interno && pista.externo && v > 0.5 && !balizaEmCurso) {
+      let cruzou = false;
+      if (!pista.noCruzamento(g.pos) && pista.anelCoerente(g.pos)) {
+        const ci = projetar(pista.interno, g.pos);
+        const ce = projetar(pista.externo, g.pos);
+        const [minha, outra] = ci.distancia < ce.distancia ? [pista.interno, pista.externo] : [pista.externo, pista.interno];
+        if (Math.min(ci.distancia, ce.distancia) < minha.meiaLargura + 0.5) {
+          for (const c of g.cantos) {
+            if (pista.noCruzamento(c)) continue;
+            const dm = projetar(minha, c).distancia;
+            const dout = projetar(outra, c).distancia;
+            if (dm - dout > 0.3) {
+              cruzou = true;
+              break;
+            }
+          }
+        }
+      }
+      if (cruzou) {
+        if (!this.sobreLinha) this.falta('linha_divisoria');
+        this.sobreLinha = true;
+        this.foraLinhaTempo = 0;
+      } else if (this.sobreLinha) {
+        this.foraLinhaTempo += dt;
+        if (this.foraLinhaTempo > 1.5) this.sobreLinha = false;
+      }
+    }
+
+    // --- Conversão / mudança de faixa sem seta
+    const rumoBruto = Math.atan2(g.frente.x, g.frente.z);
+    if (this.rumoAnterior !== null) this.rumoAcum += angulo(rumoBruto - this.rumoAnterior);
+    this.rumoAnterior = rumoBruto;
+    const rumo = this.rumoAcum;
+    if (v < -0.3) {
+      // de ré: manobra, não conversão
+      this.percurso.length = 0;
+      this.faixaCandidata = null;
+    } else if (v > 1 && !balizaEmCurso && !pertoBaliza) {
+      // 1) troca da faixa estável (anel ↔ avenida, interna ↔ externa, faixa da avenida)
+      const nova = leitura && leitura.proj.distancia < leitura.proj.faixa.meiaLargura + 0.2 && leitura.proj.direcao.dot(g.frente) > 0.7
+        ? leitura.proj.faixa
+        : null;
+      if (nova) {
+        if (this.faixaEstavel && nova === this.faixaEstavel.faixa) {
+          this.faixaEstavel.rumo = rumo;
+          this.faixaEstavel.ultimoT = t;
+          this.faixaCandidata = null;
+        } else {
+          if (!this.faixaCandidata || this.faixaCandidata.faixa !== nova) this.faixaCandidata = { faixa: nova, desde: t };
+          if (t - this.faixaCandidata.desde > 0.7) {
+            const antiga = this.faixaEstavel;
+            this.faixaEstavel = { faixa: nova, desde: t, rumo, ultimoT: t };
+            this.faixaCandidata = null;
+            if (antiga && t - antiga.ultimoT < 20) {
+              const giro = rumo - antiga.rumo;
+              let lado: 'esquerda' | 'direita';
+              if (Math.abs(giro) > 0.45) lado = giro > 0 ? 'esquerda' : 'direita';
+              else lado = projetar(antiga.faixa, g.pos).lado > 0 ? 'esquerda' : 'direita';
+              this.avaliarSeta(lado, antiga.ultimoT);
+            }
+          }
+        }
+      }
+
+      // 2) giro ≥ 60° em ≤ 18 m que não é a curva da própria via (estacionamento, cruzamentos)
+      const dPasso = vAbs * dt;
+      this.distPercorrida += dPasso;
+      const ultimo = this.percurso[this.percurso.length - 1];
+      if (!ultimo || this.distPercorrida - ultimo.d > 0.5) {
+        // Direção da via por perto (folga grande, sem exigir sentido): explica as curvas do próprio anel.
+        const via = pista.faixaEm(g.pos, 2.5);
+        let rumoVia: number | null = null;
+        if (via) {
+          const d = via.proj.direcao;
+          const sinal = d.dot(g.frente) < 0 ? -1 : 1;
+          rumoVia = Math.atan2(sinal * d.x, sinal * d.z);
+        }
+        this.percurso.push({ d: this.distPercorrida, rumo, rumoVia, t });
+        while (this.percurso.length > 1 && this.distPercorrida - this.percurso[0].d > 18) this.percurso.shift();
+        const a = this.percurso[0];
+        const b = this.percurso[this.percurso.length - 1];
+        const giro = b.rumo - a.rumo;
+        if (Math.abs(giro) > Math.PI / 3) {
+          const explicado = a.rumoVia !== null && b.rumoVia !== null && Math.abs(giro - angulo(b.rumoVia - a.rumoVia)) < Math.PI / 4;
+          if (!explicado) this.avaliarSeta(giro > 0 ? 'esquerda' : 'direita', a.t);
+          this.percurso.length = 0;
+        }
+      }
+    }
+  }
+
+  /** Conversão para `lado` iniciada em `desde`: a seta desse lado tinha que estar ligada antes. */
+  private avaliarSeta(lado: 'esquerda' | 'direita', desde: number): void {
+    const t = this.sim.tempo;
+    if (t - this.ultimaConversao < 6) return; // mesma manobra
+    // A saída da vaga já tem a sua própria falta (sem_seta).
+    if (!this.setaAvaliada) return;
+    this.ultimaConversao = t;
+    if (this.ultimaSetaLado[lado] < desde - 5) this.falta('conversao_sem_seta');
+  }
+
+  /** Há pedestre ou carro logo à frente (freada justificada)? */
+  private haMotivoParaFrear(g: ReturnType<Prova['geometria']>, trafego?: InfoTrafego): boolean {
+    if (this.contato.size > 0) return true;
+    if (!trafego) return false;
+    const aFrente = (p: THREE.Vector3, alcance: number) => {
+      const dx = p.x - g.pos.x, dz = p.z - g.pos.z;
+      const d = Math.hypot(dx, dz);
+      return d < alcance && (d < 4 || (dx * g.frente.x + dz * g.frente.z) / d > 0.3);
+    };
+    return trafego.pedestres.some((p) => aFrente(p.posicao, 25)) || trafego.carros.some((c) => aFrente(c.posicao, 20));
+  }
+}
+
+/** Ângulo em (−π, π]. */
+function angulo(a: number): number {
+  return Math.atan2(Math.sin(a), Math.cos(a));
 }

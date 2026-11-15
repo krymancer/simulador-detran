@@ -10,6 +10,8 @@ type Lado = 'centro' | 'esq' | 'dir';
 export class Retrovisores {
   private readonly itens: { cam: THREE.PerspectiveCamera; rt: THREE.WebGLRenderTarget; origem: THREE.Object3D }[] = [];
   private quadro = 0;
+  /** Laterais renderizados a cada N quadros (qualidade). */
+  intervaloLaterais = 2;
   private readonly superficies: THREE.Mesh[];
 
   constructor(
@@ -41,8 +43,8 @@ export class Retrovisores {
     for (const m of this.superficies) m.visible = false;
     for (let i = 0; i < this.itens.length; i++) {
       const it = this.itens[i];
-      // Laterais a cada 2 quadros para economizar.
-      if (i > 0 && this.quadro % 2 !== i % 2) continue;
+      // Laterais a cada N quadros para economizar (alternando esquerdo/direito).
+      if (i > 0 && (this.quadro + i) % this.intervaloLaterais !== 0) continue;
       it.origem.updateWorldMatrix(true, false);
       it.origem.getWorldPosition(it.cam.position);
       it.origem.getWorldQuaternion(it.cam.quaternion);

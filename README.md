@@ -21,7 +21,13 @@ npm test         # testes de física e da prova (headless, Node)
 | `src/world/autoescolaDecoracao.ts` | Placas (CTB), árvores e prédios da pista da autoescola. |
 | `src/world/placas.ts`, `src/world/ambiente.ts` | Placas de trânsito brasileiras e cenário (árvores, prédios, céu). |
 | `src/world/testMap.ts` | Pista de treino (rampa, semáforo), feita com as mesmas convenções de nome (serve de exemplo). |
-| `src/exam/regras.ts` | Tabela de faltas, gravidade, pontos e limite. **Confira com a resolução do CONTRAN vigente.** |
+| `src/exam/regras.ts` | Tabela de faltas e pontos pela Resolução CONTRAN nº 1.020/2025 (leve 1, média 2, grave 4, gravíssima 6; aprovado com até 10 pontos; sem eliminatória). Faltas que não são infração do CTB têm peso escolhido por nós (marcado no arquivo). |
+| `src/exam/examinador.ts`, `src/exam/pista.ts` | Examinador com percurso (11 etapas, voz em português) e regras de faixa: contramão, linha divisória, conversão sem seta. |
+| `src/render/relatorio.ts` | Relatório no fim da prova: faltas, mapa com trajeto e histórico das tentativas. |
+| `src/world/vias.ts` | Linhas centrais das faixas (gerado por `node scripts/gerar-vias.mjs`). |
+| `src/world/trafego.ts` | Carros e pedestres controlados pelo jogo. |
+| `src/audio/somCarro.ts` | Som sintetizado do motor, pneus, rodagem e eventos (marcha, freio de mão, cinto, seta, batida). |
+| `src/render/opcoes.ts` | Menu de opções (tecla O). |
 | `src/exam/exam.ts` | Avaliador: detecta as faltas a cada passo da física. |
 | `src/input/` | Teclado + Gamepad API (controle, G29, câmbio H) e a tela de calibração (F2). |
 | `src/render/`, `src/audio/` | Carro low-poly, cockpit com volante girando, retrovisores, HUD, som do motor sintetizado. |
