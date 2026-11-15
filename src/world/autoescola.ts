@@ -101,7 +101,15 @@ function retangulos(g: boolean[][]): { x0: number; x1: number; y0: number; y1: n
   return out;
 }
 
-/** Geometria das calçadas: topos (grupo 0, com UV da planta) + laterais do meio-fio (grupo 1). */
+/**
+ * Geometria das calçadas: topos (grupo 0, com UV da planta) + laterais do meio-fio (grupo 1).
+ *
+ * A grade é em células de 4 px (~17 cm); usar as células direto deixa bordas
+ * diagonais em escadinha. Aqui a grade é suavizada (gaussiana ~1 célula) e o
+ * contorno sai por marching squares no nível 0,5, com interpolação linear:
+ * o meio-fio segue a linha da planta. Células totalmente dentro viram
+ * retângulos grandes (poucos triângulos); só a borda é recortada.
+ */
 function geometriaCalcadas(g: boolean[][]): THREE.BufferGeometry {
   const pos: number[] = [];
   const uv: number[] = [];
@@ -112,33 +120,124 @@ function geometriaCalcadas(g: boolean[][]): THREE.BufferGeometry {
   const s = METROS_POR_PX * C;
   const ox = -(W / 2) * METROS_POR_PX;
   const oz = -(H / 2) * METROS_POR_PX;
-  const elev = (cx: number, cy: number) => cy >= 0 && cy < g.length && cx >= 0 && cx < g[0].length && g[cy][cx];
+  const L = g.length, Cc = g[0].length;
 
-  const quad = (pts: number[][], n: number[], alvo: number[]) => {
-    const b = pos.length / 3;
-    for (const p of pts) {
-      pos.push(p[0], p[1] + alturaTerreno(p[0], p[2]), p[2]);
-      nor.push(n[0], n[1], n[2]);
-      uv.push((p[0] - ox) / (W * METROS_POR_PX), 1 - (p[2] - oz) / (H * METROS_POR_PX));
+  // ---- campo suavizado nos centros das células, com 1 célula de margem (borda replicada)
+  const K = [1, 4, 6, 4, 1].map((v) => v / 16);
+  const v0 = (cx: number, cy: number) => (g[Math.min(L - 1, Math.max(0, cy))][Math.min(Cc - 1, Math.max(0, cx))] ? 1 : 0);
+  const tmp: Float32Array[] = [];
+  for (let y = -1; y <= L; y++) {
+    const lin = new Float32Array(Cc + 2);
+    for (let x = -1; x <= Cc; x++) {
+      let a = 0;
+      for (let k = -2; k <= 2; k++) a += K[k + 2] * v0(x + k, y);
+      lin[x + 1] = a;
     }
-    alvo.push(b, b + 1, b + 2, b, b + 2, b + 3);
+    tmp.push(lin);
+  }
+  const campo: Float32Array[] = [];
+  for (let y = -1; y <= L; y++) {
+    const lin = new Float32Array(Cc + 2);
+    for (let x = 0; x < Cc + 2; x++) {
+      let a = 0;
+      for (let k = -2; k <= 2; k++) a += K[k + 2] * tmp[Math.min(L + 1, Math.max(0, y + 1 + k))][x];
+      lin[x] = a;
+    }
+    campo.push(lin);
+  }
+  /** valor no centro da célula (cx, cy), cx/cy de −1 a Cc/L */
+  const f = (cx: number, cy: number) => campo[cy + 1][cx + 1];
+  const ISO = 0.5;
+  // posição (m) do centro de célula k, presa dentro da planta
+  const X = (k: number) => ox + Math.min(Cc, Math.max(0, k + 0.5)) * s;
+  const Z = (k: number) => oz + Math.min(L, Math.max(0, k + 0.5)) * s;
+
+  const vert = (x: number, y: number, z: number, n: number[]) => {
+    pos.push(x, y + alturaTerreno(x, z), z);
+    nor.push(n[0], n[1], n[2]);
+    uv.push((x - ox) / (W * METROS_POR_PX), 1 - (z - oz) / (H * METROS_POR_PX));
+    return pos.length / 3 - 1;
+  };
+  /** polígono convexo no topo (fan), virado para cima */
+  const topo = (pts: [number, number][]) => {
+    const ids = pts.map(([x, z]) => vert(x, h, z, [0, 1, 0]));
+    for (let i = 1; i + 1 < pts.length; i++) {
+      const [ax, az] = pts[0], [bx, bz] = pts[i], [cx, cz] = pts[i + 1];
+      // normal y do triângulo (a,b,c) = (c−a)×(b−a)… em XZ: dz1*dx2 − dx1*dz2
+      const ny = (bz - az) * (cx - ax) - (bx - ax) * (cz - az);
+      if (ny >= 0) idxTopo.push(ids[0], ids[i], ids[i + 1]);
+      else idxTopo.push(ids[0], ids[i + 1], ids[i]);
+    }
+  };
+  /** parede do meio-fio de p a q, virada para (nx, nz) */
+  const parede = (p: [number, number], q: [number, number], nx: number, nz: number) => {
+    let [ax, az] = p, [bx, bz] = q;
+    const dx = bx - ax, dz = bz - az;
+    const comp = Math.hypot(dx, dz);
+    if (comp < 1e-5) return;
+    // normal da face (a_baixo, b_baixo, b_cima) = (−dz, 0, dx)
+    if (-dz * nx + dx * nz < 0) [ax, az, bx, bz] = [bx, bz, ax, az];
+    const n = [-(bz - az) / comp, 0, (bx - ax) / comp];
+    const i0 = vert(ax, 0, az, n), i1 = vert(bx, 0, bz, n), i2 = vert(bx, h, bz, n), i3 = vert(ax, h, az, n);
+    idxLado.push(i0, i1, i2, i0, i2, i3);
   };
 
-  for (const r of retangulos(g)) {
-    const x0 = ox + r.x0 * s, x1 = ox + r.x1 * s, z0 = oz + r.y0 * s, z1 = oz + r.y1 * s;
-    quad([[x0, h, z0], [x0, h, z1], [x1, h, z1], [x1, h, z0]], [0, 1, 0], idxTopo);
-    // Laterais só onde o vizinho é asfalto (é o meio-fio de verdade).
-    for (let cy = r.y0; cy < r.y1; cy++) {
-      const za = oz + cy * s, zb = za + s;
-      if (!elev(r.x0 - 1, cy)) quad([[x0, 0, za], [x0, 0, zb], [x0, h, zb], [x0, h, za]], [-1, 0, 0], idxLado);
-      if (!elev(r.x1, cy)) quad([[x1, 0, zb], [x1, 0, za], [x1, h, za], [x1, h, zb]], [1, 0, 0], idxLado);
-    }
-    for (let cx = r.x0; cx < r.x1; cx++) {
-      const xa = ox + cx * s, xb = xa + s;
-      if (!elev(cx, r.y0 - 1)) quad([[xb, 0, z0], [xa, 0, z0], [xa, h, z0], [xb, h, z0]], [0, 0, -1], idxLado);
-      if (!elev(cx, r.y1)) quad([[xa, 0, z1], [xb, 0, z1], [xb, h, z1], [xa, h, z1]], [0, 0, 1], idxLado);
+  // ---- células duais: a célula (i, j) vai do centro (i−1, j−1) ao centro (i, j); i ∈ [0, Cc], j ∈ [0, L]
+  const cheia: boolean[][] = [];
+  for (let j = 0; j <= L; j++) {
+    const lin: boolean[] = [];
+    for (let i = 0; i <= Cc; i++)
+      lin.push(f(i - 1, j - 1) >= ISO && f(i, j - 1) >= ISO && f(i, j) >= ISO && f(i - 1, j) >= ISO);
+    cheia.push(lin);
+  }
+  for (const r of retangulos(cheia)) topo([[X(r.x0 - 1), Z(r.y0 - 1)], [X(r.x0 - 1), Z(r.y1 - 1)], [X(r.x1 - 1), Z(r.y1 - 1)], [X(r.x1 - 1), Z(r.y0 - 1)]]);
+
+  for (let j = 0; j <= L; j++) {
+    for (let i = 0; i <= Cc; i++) {
+      if (cheia[j][i]) continue;
+      // cantos em volta: tl, tr, br, bl (planta com y para baixo = +Z)
+      const cs: [number, number, number][] = [
+        [X(i - 1), Z(j - 1), f(i - 1, j - 1)],
+        [X(i), Z(j - 1), f(i, j - 1)],
+        [X(i), Z(j), f(i, j)],
+        [X(i - 1), Z(j), f(i - 1, j)],
+      ];
+      if (cs.every((c) => c[2] < ISO)) continue;
+      const poli: [number, number][] = [];
+      const cruz: { p: [number, number]; sai: boolean }[] = [];
+      for (let k = 0; k < 4; k++) {
+        const a = cs[k], b = cs[(k + 1) % 4];
+        const da = a[2] >= ISO, db = b[2] >= ISO;
+        if (da) poli.push([a[0], a[1]]);
+        if (da !== db) {
+          const t = (ISO - a[2]) / (b[2] - a[2]);
+          const p: [number, number] = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+          poli.push(p);
+          cruz.push({ p, sai: da });
+        }
+      }
+      if (poli.length >= 3) topo(poli);
+      // paredes: de cada ponto de saída até o ponto de entrada seguinte
+      if (cruz.length >= 2) {
+        // campo bilinear dentro da célula, para saber de que lado fica o asfalto
+        const x0 = cs[0][0], z0 = cs[0][1], lx = cs[1][0] - x0 || 1, lz = cs[3][1] - z0 || 1;
+        const bil = (x: number, z: number) => {
+          const u = Math.min(1, Math.max(0, (x - x0) / lx)), w = Math.min(1, Math.max(0, (z - z0) / lz));
+          return (cs[0][2] * (1 - u) + cs[1][2] * u) * (1 - w) + (cs[3][2] * (1 - u) + cs[2][2] * u) * w;
+        };
+        for (let k = 0; k < cruz.length; k++) {
+          if (!cruz[k].sai) continue;
+          const ent = cruz[(k + 1) % cruz.length];
+          const [ax, az] = cruz[k].p, [bx, bz] = ent.p;
+          let nx = -(bz - az), nz = bx - ax;
+          const mx = (ax + bx) / 2, mz = (az + bz) / 2, e = 0.02 / (Math.hypot(nx, nz) || 1);
+          if (bil(mx + nx * e, mz + nz * e) > bil(mx - nx * e, mz - nz * e)) { nx = -nx; nz = -nz; }
+          parede(cruz[k].p, ent.p, nx, nz);
+        }
+      }
     }
   }
+
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
