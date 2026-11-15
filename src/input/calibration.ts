@@ -1,59 +1,42 @@
-import { Acao, AcaoBotao, BOTOES, Entrada, NOMES_ACAO, Perfil, perfilPadrao, Vinculo } from './input';
+import {
+  Acao, BOTOES, descreverVinculo, EIXOS, Entrada, lerVinculo, NOMES_ACAO, Perfil, perfilPadrao, Vinculo,
+} from './input';
 
-type Passo =
-  | { tipo: 'volante'; lado: 'esq' | 'dir' }
-  | { tipo: 'pedal'; acao: 'acelerador' | 'freio' | 'embreagem' }
-  | { tipo: 'botao'; acao: AcaoBotao };
+const ehEixo = (a: Acao) => (EIXOS as readonly string[]).includes(a);
 
-function passosPara(perfil: Perfil): Passo[] {
-  const p: Passo[] = [
-    { tipo: 'volante', lado: 'esq' },
-    { tipo: 'volante', lado: 'dir' },
-    { tipo: 'pedal', acao: 'acelerador' },
-    { tipo: 'pedal', acao: 'freio' },
-    { tipo: 'pedal', acao: 'embreagem' },
-  ];
-  const botoes = perfil.tipo === 'volante' ? BOTOES : BOTOES.filter((b) => !/^marcha[1-5R]$/.test(b));
-  for (const b of botoes) p.push({ tipo: 'botao', acao: b });
-  return p;
+function instrucao(a: Acao, perfil: Perfil): string {
+  const vol = perfil.tipo === 'volante';
+  if (a === 'volante') return vol ? 'Gire o volante para a DIREITA e segure.' : 'Empurre o analógico de direção para a DIREITA e segure.';
+  if (a === 'olhar') return 'Mova o eixo para a DIREITA e segure.';
+  if (a === 'acelerador' || a === 'freio' || a === 'embreagem')
+    return vol ? `Pise TODO no pedal de ${NOMES_ACAO[a].toLowerCase()} e segure.` : `Aperte TODO o gatilho/analógico do ${NOMES_ACAO[a].toLowerCase()} e segure.`;
+  if (/^marcha[1-5R]$/.test(a)) return `Engate a ${NOMES_ACAO[a]} no câmbio H e segure.`;
+  return `Aperte o botão para “${NOMES_ACAO[a]}”.`;
 }
 
-function textoPasso(passo: Passo, perfil: Perfil): string {
-  const vol = perfil.tipo === 'volante';
-  switch (passo.tipo) {
-    case 'volante':
-      return vol
-        ? `Gire o volante TODO para a ${passo.lado === 'esq' ? 'ESQUERDA' : 'DIREITA'} e segure.`
-        : `Empurre o analógico de direção TODO para a ${passo.lado === 'esq' ? 'ESQUERDA' : 'DIREITA'} e segure.`;
-    case 'pedal':
-      return vol
-        ? `Pise TODO no pedal de ${NOMES_ACAO[passo.acao].toLowerCase()} e segure.`
-        : `Aperte/empurre TODO o controle que vai ser o ${NOMES_ACAO[passo.acao].toLowerCase()} e segure (gatilho ou analógico).`;
-    case 'botao':
-      if (/^marcha[1-5R]$/.test(passo.acao)) return `Câmbio H: engate a ${NOMES_ACAO[passo.acao]} e segure. (Pule se não tiver câmbio H.)`;
-      return `Aperte o botão para: ${NOMES_ACAO[passo.acao]}.`;
-  }
+interface Captura {
+  acao: Acao;
+  gpIndex: number;
+  base: { eixos: number[]; botoes: number[] };
+  candidato: { tipo: 'eixo' | 'botao'; indice: number; valor: number; desde: number } | null;
+  /** Fila do assistente completo (null = mudança avulsa). */
+  fila: Acao[] | null;
+  esperandoSoltar: boolean;
 }
 
 /**
- * Tela de calibração: lista dispositivos, mostra os valores brutos e conduz o
- * assistente que descobre qual eixo/botão é cada comando.
+ * Tela de controles (F2): mostra a tabela ação → eixo/botão de cada dispositivo,
+ * com o valor ao vivo, e deixa trocar UM comando de cada vez (“Mudar”),
+ * inverter um eixo ou limpar. O assistente completo continua disponível.
  */
 export class Calibracao {
   private readonly el: HTMLElement;
   private readonly entrada: Entrada;
   private aberta = false;
-  private assistente: {
-    gpIndex: number;
-    perfil: Perfil;
-    passos: Passo[];
-    i: number;
-    base: { eixos: number[]; botoes: number[] };
-    candidato: { tipo: 'eixo' | 'botao'; indice: number; valor: number; desde: number } | null;
-    esperandoSoltar: boolean;
-    volEsq: { indice: number; valor: number } | null;
-    msg: string;
-  } | null = null;
+  private selecionado = 0;
+  private captura: Captura | null = null;
+  private conteudo!: HTMLElement;
+  private ultimoHtml = '';
   onFechar: () => void = () => {};
 
   constructor(entrada: Entrada, pai: HTMLElement) {
@@ -61,6 +44,14 @@ export class Calibracao {
     this.el = document.createElement('div');
     this.el.className = 'painel calibracao oculto';
     pai.appendChild(this.el);
+    this.conteudo = document.createElement('div');
+    this.el.appendChild(this.conteudo);
+    window.addEventListener('keydown', (e) => {
+      if (this.aberta && this.captura && e.code === 'Escape') {
+        this.captura = null;
+        e.preventDefault();
+      }
+    });
   }
 
   get estaAberta(): boolean {
@@ -81,7 +72,7 @@ export class Calibracao {
 
   fechar(): void {
     this.aberta = false;
-    this.assistente = null;
+    this.captura = null;
     this.entrada.pausado = false;
     this.el.classList.add('oculto');
     this.onFechar();
@@ -95,225 +86,213 @@ export class Calibracao {
     return { eixos: [...gp.axes], botoes: gp.buttons.map((b) => b.value || (b.pressed ? 1 : 0)) };
   }
 
-  private iniciarAssistente(gp: Gamepad): void {
-    const perfil: Perfil = { ...perfilPadrao(gp), vinculos: {}, calibrado: false };
-    perfil.tipo = this.entrada.perfil(gp).tipo;
-    this.assistente = {
-      gpIndex: gp.index,
-      perfil,
-      passos: passosPara(perfil),
-      i: 0,
-      base: this.snapshot(gp),
-      candidato: null,
-      esperandoSoltar: false,
-      volEsq: null,
-      msg: '',
-    };
+  private iniciarCaptura(gp: Gamepad, acao: Acao, fila: Acao[] | null = null): void {
+    this.captura = { acao, gpIndex: gp.index, base: this.snapshot(gp), candidato: null, fila, esperandoSoltar: false };
   }
 
-  private avancar(gp: Gamepad): void {
-    const a = this.assistente!;
-    a.i++;
-    a.candidato = null;
-    a.esperandoSoltar = true;
-    if (a.i >= a.passos.length) {
-      a.perfil.calibrado = true;
-      this.entrada.definirPerfil(a.perfil);
-      this.assistente = null;
-      return;
+  private gravar(gp: Gamepad, acao: Acao, v: Vinculo | undefined): void {
+    const p = this.entrada.perfil(gp);
+    const vinculos = { ...p.vinculos };
+    if (v) vinculos[acao] = v;
+    else delete vinculos[acao];
+    this.entrada.definirPerfil({ ...p, vinculos, calibrado: true });
+  }
+
+  private proximo(gp: Gamepad): void {
+    const c = this.captura!;
+    if (c.fila && c.fila.length) {
+      const a = c.fila.shift()!;
+      this.captura = { ...c, acao: a, candidato: null, esperandoSoltar: true };
+    } else {
+      this.captura = null;
     }
     void gp;
   }
 
-  private vincular(acao: Acao, v: Vinculo): void {
-    this.assistente!.perfil.vinculos[acao] = v;
-  }
-
-  private passoAssistente(gp: Gamepad): void {
-    const a = this.assistente!;
+  /** Detecta o controle mexido e grava o vínculo. */
+  private passoCaptura(gp: Gamepad): void {
+    const c = this.captura!;
     const agora = this.snapshot(gp);
-    const passo = a.passos[a.i];
     const t = performance.now() / 1000;
 
-    if (a.esperandoSoltar) {
-      // Espera tudo voltar ao repouso antes do próximo passo.
+    if (c.esperandoSoltar) {
       const mexendo =
-        agora.eixos.some((v, i) => Math.abs(v - a.base.eixos[i]) > 0.2) ||
-        agora.botoes.some((v, i) => v > 0.5 && a.base.botoes[i] <= 0.5);
-      if (passo?.tipo === 'volante' && passo.lado === 'dir') {
-        a.esperandoSoltar = false; // da esquerda direto para a direita
-      } else if (!mexendo) {
-        a.esperandoSoltar = false;
-      } else {
-        a.msg = 'Solte…';
+        agora.eixos.some((v, i) => Math.abs(v - c.base.eixos[i]) > 0.25) ||
+        agora.botoes.some((v, i) => v > 0.5 && c.base.botoes[i] <= 0.5);
+      if (mexendo) return;
+      c.esperandoSoltar = false;
+    }
+
+    if (!ehEixo(c.acao)) {
+      const b = agora.botoes.findIndex((v, i) => v > 0.5 && c.base.botoes[i] <= 0.5);
+      if (b >= 0) {
+        this.gravar(gp, c.acao, { tipo: 'botao', indice: b });
+        this.proximo(gp);
         return;
       }
-    }
-    a.msg = '';
-
-    if (passo.tipo === 'botao') {
-      const usados = new Set(
-        Object.values(a.perfil.vinculos).filter((v): v is Extract<Vinculo, { tipo: 'botao' }> => v?.tipo === 'botao').map((v) => v.indice),
-      );
-      const idx = agora.botoes.findIndex((v, i) => v > 0.5 && a.base.botoes[i] <= 0.5 && !usados.has(i));
-      if (idx >= 0) {
-        this.vincular(passo.acao, { tipo: 'botao', indice: idx });
-        this.avancar(gp);
+      // Direcional que aparece como eixo (hat): vira “eixo como botão”.
+      const e = agora.eixos.findIndex((v, i) => Math.abs(v - c.base.eixos[i]) > 0.3);
+      if (e >= 0) {
+        if (!c.candidato || c.candidato.indice !== e || Math.abs(c.candidato.valor - agora.eixos[e]) > 0.02) {
+          c.candidato = { tipo: 'eixo', indice: e, valor: agora.eixos[e], desde: t };
+        } else if (t - c.candidato.desde > 0.3) {
+          this.gravar(gp, c.acao, { tipo: 'eixoBotao', indice: e, alvo: agora.eixos[e] });
+          this.proximo(gp);
+        }
       }
       return;
     }
 
-    // Eixos (volante/pedais): maior variação em relação ao repouso.
+    // Eixo: maior variação em relação ao repouso (também aceita gatilho analógico como pedal).
     let melhor: { tipo: 'eixo' | 'botao'; indice: number; valor: number; delta: number } | null = null;
     agora.eixos.forEach((v, i) => {
-      if (passo.tipo === 'volante' && passo.lado === 'dir' && a.volEsq && i !== a.volEsq.indice) return;
-      const d = Math.abs(v - a.base.eixos[i]);
+      const d = Math.abs(v - c.base.eixos[i]);
       if (d > 0.4 && (!melhor || d > melhor.delta)) melhor = { tipo: 'eixo', indice: i, valor: v, delta: d };
     });
-    if (passo.tipo === 'pedal') {
+    if (c.acao !== 'volante' && c.acao !== 'olhar') {
       agora.botoes.forEach((v, i) => {
-        const d = v - a.base.botoes[i];
+        const d = v - c.base.botoes[i];
         if (d > 0.4 && (!melhor || d > melhor.delta)) melhor = { tipo: 'botao', indice: i, valor: v, delta: d };
       });
     }
     const m = melhor as { tipo: 'eixo' | 'botao'; indice: number; valor: number; delta: number } | null;
-    if (!m) {
-      a.candidato = null;
+    if (!m) { c.candidato = null; return; }
+    if (!c.candidato || c.candidato.indice !== m.indice || c.candidato.tipo !== m.tipo || Math.abs(c.candidato.valor - m.valor) > 0.03) {
+      c.candidato = { tipo: m.tipo, indice: m.indice, valor: m.valor, desde: t };
       return;
     }
-    if (!a.candidato || a.candidato.indice !== m.indice || a.candidato.tipo !== m.tipo || Math.abs(a.candidato.valor - m.valor) > 0.03) {
-      a.candidato = { tipo: m.tipo, indice: m.indice, valor: m.valor, desde: t };
-      return;
-    }
-    a.msg = 'Segure…';
-    if (t - a.candidato.desde < 0.6) return;
+    if (t - c.candidato.desde < 0.5) return;
 
-    // Aceito
-    if (passo.tipo === 'volante') {
-      if (passo.lado === 'esq') {
-        a.volEsq = { indice: m.indice, valor: m.valor };
-      } else if (a.volEsq) {
-        const centro = (a.volEsq.valor + m.valor) / 2;
-        this.vincular('volante', { tipo: 'eixo', indice: m.indice, repouso: centro, fim: m.valor });
-      }
-    } else if (m.tipo === 'eixo') {
-      this.vincular(passo.acao, { tipo: 'eixo', indice: m.indice, repouso: a.base.eixos[m.indice], fim: m.valor });
+    if (m.tipo === 'botao') {
+      this.gravar(gp, c.acao, { tipo: 'botao', indice: m.indice });
+    } else if (c.acao === 'volante' || c.acao === 'olhar') {
+      // centro = onde estava; direita = onde foi
+      this.gravar(gp, c.acao, { tipo: 'eixo', indice: m.indice, repouso: c.base.eixos[m.indice], fim: m.valor });
     } else {
-      this.vincular(passo.acao, { tipo: 'botao', indice: m.indice });
+      this.gravar(gp, c.acao, { tipo: 'eixo', indice: m.indice, repouso: c.base.eixos[m.indice], fim: m.valor });
     }
-    this.avancar(gp);
+    c.esperandoSoltar = true;
+    this.proximo(gp);
   }
 
   private atualizar(): void {
     const gps = this.entrada.gamepads();
-    let html = '<h2>Controles e volante</h2>';
-
-    if (this.assistente) {
-      const a = this.assistente;
-      const gp = this.gp(a.gpIndex);
-      if (!gp) {
-        this.assistente = null;
-      } else {
-        this.passoAssistente(gp);
-        if (this.assistente) {
-          const passo = a.passos[a.i];
-          html += `<div class="assistente">
-            <div class="passo">Passo ${a.i + 1} de ${a.passos.length}</div>
-            <div class="instrucao">${textoPasso(passo, a.perfil)}</div>
-            <div class="msg">${a.msg}</div>
-            <div class="botoes">
-              ${passo.tipo === 'botao' || passo.tipo === 'pedal' ? '<button data-acao="pular">Pular</button>' : ''}
-              <button data-acao="cancelar">Cancelar</button>
-            </div>
-          </div>`;
-          this.render(html, this.monitor(gp));
-          return;
-        }
-      }
+    if (this.captura) {
+      const gp = this.gp(this.captura.gpIndex);
+      if (gp) this.passoCaptura(gp);
+      else this.captura = null;
     }
 
+    let html = '<h2>Controles</h2>';
     if (gps.length === 0) {
       html += `<p>Nenhum controle detectado. Conecte o controle ou o G29 e <b>aperte qualquer botão</b> —
         o navegador só mostra o dispositivo depois de uma interação.</p>
-        <p class="dica">G29 no PC: chave do volante na posição <b>PS3</b>. No Linux, o driver <code>hid-logitech</code> já cuida do resto.</p>`;
+        <p class="dica">G29 no PC: chave na posição <b>PS3</b>. O G29 já vem mapeado; aqui você só ajusta o que quiser.</p>`;
+      html += `<div class="botoes"><button data-acao="fechar">Fechar (F2)</button></div>`;
+      this.render(html);
+      return;
     }
-    for (const gp of gps) {
-      const p = this.entrada.perfil(gp);
-      const vinc = Object.entries(p.vinculos)
-        .map(([k, v]) => `<span class="tag">${NOMES_ACAO[k as Acao]}: ${v!.tipo === 'eixo' ? `eixo ${v!.indice}` : `botão ${v!.indice}`}</span>`)
-        .join(' ');
-      html += `<div class="dispositivo">
-        <div><b>${gp.id}</b></div>
-        <div class="sub">${p.tipo === 'volante' ? 'Volante' : 'Controle'} · mapping: ${gp.mapping || 'não-padrão'} ·
-          ${p.calibrado ? '<span class="ok">calibrado</span>' : '<span class="aviso">precisa calibrar</span>'}</div>
-        <div class="vinculos">${vinc}</div>
-        <div class="botoes">
-          <button data-acao="calibrar" data-gp="${gp.index}">Calibrar</button>
-          <button data-acao="tipo" data-gp="${gp.index}">Tratar como ${p.tipo === 'volante' ? 'controle' : 'volante'}</button>
-          <button data-acao="padrao" data-gp="${gp.index}">Restaurar padrão</button>
-        </div>
-      </div>`;
+    if (!gps.some((g) => g.index === this.selecionado)) this.selecionado = gps[0].index;
+
+    html += '<div class="abas">' + gps.map((g) =>
+      `<button class="${g.index === this.selecionado ? 'ativa' : ''}" data-acao="sel" data-gp="${g.index}">${g.id.replace(/\(.*\)/, '').trim().slice(0, 40) || 'Dispositivo ' + g.index}</button>`,
+    ).join('') + '</div>';
+
+    const gp = gps.find((g) => g.index === this.selecionado)!;
+    const p = this.entrada.perfil(gp);
+    html += `<div class="sub">${gp.id} · ${p.tipo === 'volante' ? 'Volante' : 'Controle'} · ${gp.axes.length} eixos, ${gp.buttons.length} botões</div>`;
+
+    if (this.captura) {
+      html += `<div class="assistente"><div class="instrucao">${NOMES_ACAO[this.captura.acao]}: ${instrucao(this.captura.acao, p)}</div>
+        <div class="msg">${this.captura.esperandoSoltar ? 'Solte…' : this.captura.candidato ? 'Segure…' : 'Aguardando…'}</div>
+        <div class="botoes">${this.captura.fila ? '<button data-acao="pular">Pular</button>' : ''}<button data-acao="cancelar">Cancelar (Esc)</button></div></div>`;
     }
-    html += `<div class="botoes"><button data-acao="fechar">Fechar (F2)</button></div>`;
-    this.render(html, gps.map((g) => `<div class="sub">${g.id}</div>${this.monitor(g)}`).join(''));
+
+    html += '<table class="mapa-controles"><thead><tr><th>Ação</th><th>Vínculo</th><th>Valor</th><th></th></tr></thead><tbody>';
+    for (const a of [...EIXOS, ...BOTOES] as Acao[]) {
+      const v = p.vinculos[a];
+      const val = v ? lerVinculo(gp, v) : 0;
+      const eixo = ehEixo(a);
+      const pct = eixo && (a === 'volante' || a === 'olhar') ? ((Math.max(-1, Math.min(1, val)) + 1) / 2) * 100 : Math.max(0, Math.min(1, val)) * 100;
+      html += `<tr class="${this.captura?.acao === a ? 'capturando' : ''}">
+        <td>${NOMES_ACAO[a]}</td>
+        <td class="vinc">${descreverVinculo(v)}</td>
+        <td><div class="medidor ${eixo && (a === 'volante' || a === 'olhar') ? 'centro' : ''}"><i data-val="${a}" style="width:${pct}%"></i></div></td>
+        <td class="acoes">
+          <button data-acao="mudar" data-a="${a}">Mudar</button>
+          ${v?.tipo === 'eixo' ? `<button data-acao="inverter" data-a="${a}" title="Inverter eixo">⇄</button>` : ''}
+          ${v ? `<button data-acao="limpar" data-a="${a}" title="Remover">✕</button>` : ''}
+        </td></tr>`;
+    }
+    html += '</tbody></table>';
+    html += `<div class="botoes">
+      <button data-acao="assistente">Assistente completo</button>
+      <button data-acao="tipo">Tratar como ${p.tipo === 'volante' ? 'controle' : 'volante'}</button>
+      <button data-acao="padrao">Restaurar padrão</button>
+      <button data-acao="fechar">Fechar (F2)</button>
+    </div>
+    <p class="dica">Teclado: W/S acelerador/freio · A/D direção · Shift embreagem · 1–5/R/N marchas · Espaço freio de mão · I partida · Q/E setas · L farol · K pisca-alerta · C cinto · Z/X olhar · V câmera.</p>`;
+    this.render(html);
+
+    // Valores ao vivo sem refazer o HTML (para os botões continuarem clicáveis).
+    this.conteudo.querySelectorAll<HTMLElement>('[data-val]').forEach((el) => {
+      const a = el.dataset.val as Acao;
+      const v = p.vinculos[a];
+      const val = v ? lerVinculo(gp, v) : 0;
+      const centro = a === 'volante' || a === 'olhar';
+      el.style.width = `${centro ? ((Math.max(-1, Math.min(1, val)) + 1) / 2) * 100 : Math.max(0, Math.min(1, val)) * 100}%`;
+    });
   }
 
-  private monitor(gp: Gamepad): string {
-    const eixos = gp.axes
-      .map((v, i) => `<div class="eixo"><span>${i}</span><div class="barra"><i style="left:${((v + 1) / 2) * 100}%"></i></div><span>${v.toFixed(2)}</span></div>`)
-      .join('');
-    const botoes = gp.buttons
-      .map((b, i) => `<span class="bt ${b.pressed || b.value > 0.5 ? 'on' : ''}">${i}</span>`)
-      .join('');
-    return `<div class="monitor"><div class="eixos">${eixos}</div><div class="bts">${botoes}</div></div>`;
+  private render(html: string): void {
+    // Ignora as larguras dos medidores na comparação (mudam todo frame).
+    const chave = html.replace(/style="width:[^"]*"/g, '');
+    if (chave === this.ultimoHtml) return;
+    this.ultimoHtml = chave;
+    this.conteudo.innerHTML = html;
+    this.conteudo.querySelectorAll('button').forEach((b) => {
+      b.onclick = () => this.clique(b.dataset.acao!, b.dataset.a as Acao | undefined, b.dataset.gp);
+    });
   }
 
-  private ultimoHtml = '';
-  private conteudo: HTMLElement | null = null;
-  private monitorEl: HTMLElement | null = null;
-  /** Parte estática (com botões) só é refeita quando muda; o monitor ao vivo é atualizado todo frame. */
-  private render(html: string, monitor: string): void {
-    if (!this.conteudo) {
-      this.conteudo = document.createElement('div');
-      this.monitorEl = document.createElement('div');
-      this.el.append(this.conteudo, this.monitorEl);
-    }
-    if (html !== this.ultimoHtml) {
-      this.ultimoHtml = html;
-      this.conteudo.innerHTML = html;
-      this.conteudo.querySelectorAll('button').forEach((b) => {
-        b.onclick = () => this.clique(b.dataset.acao!, b.dataset.gp);
-      });
-    }
-    this.monitorEl!.innerHTML = monitor;
-  }
-
-  private clique(acao: string, gpStr?: string): void {
-    const gp = gpStr !== undefined ? this.gp(Number(gpStr)) : null;
+  private clique(acao: string, a?: Acao, gpStr?: string): void {
+    if (acao === 'sel' && gpStr !== undefined) { this.selecionado = Number(gpStr); this.captura = null; return; }
+    if (acao === 'fechar') { this.fechar(); return; }
+    if (acao === 'cancelar') { this.captura = null; return; }
+    const gp = this.gp(this.selecionado);
+    if (!gp) return;
+    const p = this.entrada.perfil(gp);
     switch (acao) {
-      case 'fechar':
-        this.fechar();
+      case 'mudar':
+        if (a) this.iniciarCaptura(gp, a);
         break;
-      case 'calibrar':
-        if (gp) this.iniciarAssistente(gp);
-        break;
-      case 'tipo':
-        if (gp) {
-          const p = this.entrada.perfil(gp);
-          this.entrada.definirPerfil({ ...p, tipo: p.tipo === 'volante' ? 'controle' : 'volante' });
+      case 'inverter': {
+        const v = a && p.vinculos[a];
+        if (a && v && v.tipo === 'eixo') {
+          // volante/olhar: espelha em torno do centro; pedais: troca repouso e fim
+          const nv = a === 'volante' || a === 'olhar'
+            ? { ...v, fim: 2 * v.repouso - v.fim }
+            : { ...v, repouso: v.fim, fim: v.repouso };
+          this.gravar(gp, a, nv);
         }
         break;
-      case 'padrao':
-        if (gp) this.entrada.definirPerfil(perfilPadrao(gp));
+      }
+      case 'limpar':
+        if (a) this.gravar(gp, a, undefined);
         break;
-      case 'pular': {
-        const a = this.assistente;
-        const g = a && this.gp(a.gpIndex);
-        if (a && g) this.avancar(g);
+      case 'assistente': {
+        const todas = [...EIXOS, ...BOTOES] as Acao[];
+        this.iniciarCaptura(gp, todas[0], todas.slice(1));
         break;
       }
-      case 'cancelar':
-        this.assistente = null;
+      case 'pular':
+        if (this.captura) this.proximo(gp);
+        break;
+      case 'tipo':
+        this.entrada.definirPerfil({ ...p, tipo: p.tipo === 'volante' ? 'controle' : 'volante' });
+        break;
+      case 'padrao':
+        this.entrada.definirPerfil(perfilPadrao(gp));
         break;
     }
     this.ultimoHtml = '';

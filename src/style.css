@@ -32,28 +32,20 @@ button:hover { background: #364151; }
 
 /* HUD */
 .hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
-.painel-inst { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); display: grid;
-  grid-template-columns: auto 230px auto auto; grid-template-rows: auto auto; gap: 6px 18px; align-items: center;
-  background: var(--fundo-painel); border: 1px solid var(--borda); border-radius: 12px; padding: 10px 18px; }
-.vel span { font-size: 40px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.vel small { color: var(--sub); margin-left: 4px; }
-.rpm { font-variant-numeric: tabular-nums; color: var(--sub); font-size: 13px; }
-.rpm-barra { position: relative; height: 12px; background: #222a33; border-radius: 6px; overflow: hidden; margin-bottom: 4px; }
-.rpm-barra i { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(90deg, #3ddc84, #ffb000 70%, #ff4d4d); }
-.rpm-barra .red { position: absolute; left: 87.5%; top: 0; bottom: 0; right: 0; background: rgba(255, 60, 60, .25); }
-.marcha { font-size: 42px; font-weight: 800; width: 52px; text-align: center; color: var(--acento); }
-.marcha.arranhando { color: var(--ruim); animation: tremer .1s infinite; }
-@keyframes tremer { 50% { transform: translateX(2px); } }
-.pedais { display: flex; gap: 8px; }
+.cluster { position: absolute; right: 12px; bottom: 12px; display: grid;
+  grid-template-columns: auto auto; grid-template-rows: auto auto auto; gap: 4px 14px; align-items: center; justify-items: center;
+  background: linear-gradient(180deg, rgba(10,12,15,.55), rgba(10,12,15,.85)); border: 1px solid var(--borda);
+  border-radius: 110px 110px 16px 16px; padding: 10px 22px 8px; }
+.mostradores { display: flex; gap: 10px; grid-row: 1; grid-column: 1; }
+.pedais { display: flex; gap: 8px; grid-row: 1; grid-column: 2; }
 .pedais > div { display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 11px; color: var(--sub); }
-.pb { position: relative; width: 12px; height: 46px; background: #222a33; border-radius: 3px; overflow: hidden; }
+.pb { position: relative; width: 12px; height: 56px; background: #222a33; border-radius: 3px; overflow: hidden; }
 .pb i { position: absolute; left: 0; right: 0; bottom: 0; background: var(--acento); }
-.luzes { grid-column: 1 / -1; display: flex; gap: 10px; justify-content: center; font-size: 12px; font-weight: 600; }
-.luz { color: #4a535e; padding: 2px 6px; border-radius: 4px; }
-.luz.alerta { color: var(--ruim); }
-.luz.seta { font-size: 16px; }
-.luz.seta.on { color: var(--ok); }
-.extra { grid-column: 1 / -1; text-align: center; color: var(--sub); font-size: 12px; }
+.luzes { grid-row: 2; grid-column: 1 / -1; display: flex; gap: 10px; justify-content: center; font-size: 15px; font-weight: 700; }
+.luz { color: #2c333b; min-width: 20px; text-align: center; transition: color .05s; }
+.luz.on { color: var(--cor); text-shadow: 0 0 8px var(--cor); }
+.extra { grid-row: 3; grid-column: 1 / -1; color: var(--sub); font-size: 12px; min-height: 15px; }
+.extra.alerta { color: var(--ruim); font-weight: 700; }
 
 .prova { position: absolute; right: 14px; top: 14px; width: 300px; background: var(--fundo-painel);
   border: 1px solid var(--borda); border-radius: 10px; padding: 12px 14px; font-size: 13px; }
@@ -93,3 +85,16 @@ button:hover { background: #364151; }
 .bts { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 6px; }
 .bt { font-size: 10px; width: 22px; text-align: center; padding: 2px 0; border-radius: 3px; background: #222a33; color: var(--sub); }
 .bt.on { background: var(--acento); color: #000; }
+
+.abas { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0; }
+.abas button.ativa { background: var(--acento); color: #000; }
+.mapa-controles { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+.mapa-controles th { text-align: left; color: var(--sub); font-weight: 500; border-bottom: 1px solid var(--borda); padding: 4px; }
+.mapa-controles td { padding: 3px 4px; border-bottom: 1px solid rgba(255,255,255,.04); }
+.mapa-controles td.vinc { color: var(--sub); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mapa-controles td.acoes { white-space: nowrap; text-align: right; }
+.mapa-controles td.acoes button { padding: 3px 8px; font-size: 12px; }
+.mapa-controles tr.capturando td { background: rgba(255,176,0,.15); }
+.medidor { position: relative; width: 110px; height: 8px; background: #222a33; border-radius: 4px; overflow: hidden; }
+.medidor i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--acento); }
+.medidor.centro::after { content: ''; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: #fff6; }

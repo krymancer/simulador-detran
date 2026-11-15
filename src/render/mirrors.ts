@@ -1,62 +1,57 @@
 import * as THREE from 'three';
 
+type Lado = 'centro' | 'esq' | 'dir';
+
 /**
- * Retrovisores (central e laterais) para a câmera de cockpit: cada um renderiza
- * a cena num render target e é desenhado espelhado num overlay ortográfico.
+ * Retrovisores de verdade: cada espelho do carro (central e laterais) recebe a
+ * imagem de uma câmera virada para trás, renderizada numa textura espelhada.
+ * Assim os espelhos aparecem dentro da cena, no lugar certo, como num simulador.
  */
 export class Retrovisores {
-  private readonly itens: { cam: THREE.PerspectiveCamera; rt: THREE.WebGLRenderTarget; quad: THREE.Mesh; origem: THREE.Object3D }[] = [];
-  private readonly cenaOverlay = new THREE.Scene();
-  private readonly camOverlay = new THREE.OrthographicCamera(0, 1, 1, 0, -1, 1);
+  private readonly itens: { cam: THREE.PerspectiveCamera; rt: THREE.WebGLRenderTarget; origem: THREE.Object3D }[] = [];
+  private quadro = 0;
+  private readonly superficies: THREE.Mesh[];
 
-  constructor(origens: { centro: THREE.Object3D; esq: THREE.Object3D; dir: THREE.Object3D }) {
-    const mk = (origem: THREE.Object3D, w: number, h: number, fov: number) => {
-      const rt = new THREE.WebGLRenderTarget(w, h);
+  constructor(
+    origens: Record<Lado, THREE.Object3D>,
+    superficies: Record<Lado, THREE.Mesh>,
+  ) {
+    this.superficies = Object.values(superficies);
+    const mk = (lado: Lado, w: number, h: number, fov: number) => {
+      const rt = new THREE.WebGLRenderTarget(w, h, { samples: 2 });
       rt.texture.colorSpace = THREE.SRGBColorSpace;
-      const cam = new THREE.PerspectiveCamera(fov, w / h, 0.05, 250);
-      const tex = rt.texture;
-      tex.wrapS = THREE.RepeatWrapping;
-      tex.repeat.x = -1; // espelhado
-      const quad = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({ map: tex }));
-      const borda = new THREE.Mesh(new THREE.PlaneGeometry(1.06, 1.12), new THREE.MeshBasicMaterial({ color: 0x111111 }));
-      borda.position.z = -0.1;
-      quad.add(borda);
-      this.cenaOverlay.add(quad);
-      this.itens.push({ cam, rt, quad, origem });
+      rt.texture.wrapS = THREE.RepeatWrapping;
+      rt.texture.repeat.x = -1; // espelhado
+      const cam = new THREE.PerspectiveCamera(fov, w / h, 0.1, 300);
+      const mat = superficies[lado].material as THREE.MeshBasicMaterial;
+      mat.map = rt.texture;
+      mat.color?.setHex(0xffffff);
+      mat.needsUpdate = true;
+      this.itens.push({ cam, rt, origem: origens[lado] });
     };
-    mk(origens.centro, 512, 140, 18);
-    mk(origens.esq, 256, 170, 30);
-    mk(origens.dir, 256, 170, 30);
+    mk('centro', 512, 160, 22);
+    mk('esq', 256, 192, 32);
+    mk('dir', 256, 192, 32);
   }
 
-  private layout(w: number, h: number): void {
-    const s = Math.min(1, w / 1400);
-    const [c, e, d] = this.itens;
-    c.quad.scale.set(420 * s, 115 * s, 1);
-    c.quad.position.set(w / 2, h - 75 * s, 0);
-    e.quad.scale.set(220 * s, 145 * s, 1);
-    e.quad.position.set(140 * s, h * 0.42, 0);
-    d.quad.scale.set(220 * s, 145 * s, 1);
-    d.quad.position.set(w - 140 * s, h * 0.42, 0);
-    this.camOverlay.right = w;
-    this.camOverlay.top = h;
-    this.camOverlay.updateProjectionMatrix();
-  }
-
-  render(renderer: THREE.WebGLRenderer, cena: THREE.Scene, w: number, h: number): void {
-    for (const it of this.itens) {
+  /** Renderiza os espelhos (o carro deve estar visível para aparecer nos laterais). */
+  render(renderer: THREE.WebGLRenderer, cena: THREE.Scene): void {
+    this.quadro++;
+    // Esconde as superfícies para não ler e escrever a mesma textura.
+    for (const m of this.superficies) m.visible = false;
+    for (let i = 0; i < this.itens.length; i++) {
+      const it = this.itens[i];
+      // Laterais a cada 2 quadros para economizar.
+      if (i > 0 && this.quadro % 2 !== i % 2) continue;
+      it.origem.updateWorldMatrix(true, false);
       it.origem.getWorldPosition(it.cam.position);
       it.origem.getWorldQuaternion(it.cam.quaternion);
-      // a câmera olha para −Z; o objeto de origem aponta +Z para trás → gira 180°
+      // A câmera olha para −Z; a origem aponta +Z para trás → gira 180°.
       it.cam.rotateY(Math.PI);
       renderer.setRenderTarget(it.rt);
       renderer.render(cena, it.cam);
     }
     renderer.setRenderTarget(null);
-    this.layout(w, h);
-    renderer.autoClear = false;
-    renderer.clearDepth();
-    renderer.render(this.cenaOverlay, this.camOverlay);
-    renderer.autoClear = true;
+    for (const m of this.superficies) m.visible = true;
   }
 }

@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { KWID } from '../src/sim/carConfig';
+import * as THREE from 'three';
+import { KWID, MOBI } from '../src/sim/carConfig';
 import { Comandos, COMANDOS_NEUTROS } from '../src/sim/powertrain';
 import { iniciarRapier, Simulacao, HZ_FISICA, DT_FISICA } from '../src/sim/simulation';
 import { lerMapa } from '../src/world/parser';
@@ -84,5 +85,46 @@ describe('mapa de teste + prova', () => {
     rodar(2, () => ({ embreagem: 0, marcha: 1, freioDeMao: false }));
     expect(prova.faltas.map((f) => f.codigo)).toContain('motor_apagou');
     expect(prova.aprovado).toBe(true); // média: 2 pontos, ainda aprovado
+  });
+});
+
+describe('mapa da autoescola (planta)', () => {
+  it('gera pista, calçadas, baliza, faixas, PARE e spawn', async () => {
+    const { criarMapaAutoescola } = await import('../src/world/autoescola');
+    const mapa = lerMapa(criarMapaAutoescola());
+    const tipos = mapa.zonas.map((z) => z.tipo).sort();
+    expect(tipos).toEqual(['baliza', 'faixa_pedestre', 'faixa_pedestre', 'faixa_pedestre', 'pare', 'pare']);
+    expect(mapa.obstaculos.filter((o) => o.tipo === 'baliza')).toHaveLength(4);
+    expect(mapa.colisores.some((c) => c.tipo === 'calcada')).toBe(true);
+    const sim = new Simulacao(mapa, MOBI);
+    for (let i = 0; i < 2 * HZ_FISICA; i++) sim.passo(COMANDOS_NEUTROS);
+    const t = sim.carro.corpo.translation();
+    // nasce no asfalto do estacionamento, parado, sem tocar calçada
+    expect(Math.abs(t.y - MOBI.alturaCG)).toBeLessThan(0.05);
+    expect(sim.carro.rodas.every((r) => r.noChao && sim.tipoColisor.get(r.colisorChao!) === 'chao')).toBe(true);
+    expect(sim.carro.velocidade()).toBeLessThan(0.05);
+  });
+
+  it('bater numa baliza derruba e é eliminatória', async () => {
+    const { criarMapaAutoescola } = await import('../src/world/autoescola');
+    const mapa = lerMapa(criarMapaAutoescola());
+    const baliza = mapa.obstaculos.find((o) => o.tipo === 'baliza')!;
+    // põe o carro 6 m antes da baliza, apontando para ela, andando a 15 km/h
+    mapa.spawn = { posicao: new THREE.Vector3(baliza.x, 0, baliza.z + 6), yaw: Math.PI };
+    const sim = new Simulacao(mapa, MOBI);
+    const prova = new Prova(sim);
+    prova.iniciada = true;
+    sim.carro.corpo.setLinvel({ x: 0, y: 0, z: -4.2 }, true);
+    sim.carro.trem.omegaRoda.fill(4.2 / MOBI.roda.raio);
+    for (let i = 0; i < 3 * HZ_FISICA; i++) {
+      const c = { ...COMANDOS_NEUTROS, freioDeMao: false };
+      sim.passo(c);
+      prova.atualizar(DT_FISICA, c, { seta: null, cinto: true }, sim.carro.trem.eventos.splice(0));
+    }
+    const codigos = prova.faltas.map((f) => f.codigo);
+    console.log('baliza:', codigos.join(', '), 'pos', baliza.x.toFixed(2), baliza.z.toFixed(2));
+    expect(codigos).toContain('tocou_baliza');
+    expect(codigos).toContain('derrubou_baliza');
+    expect(prova.aprovado).toBe(false);
   });
 });

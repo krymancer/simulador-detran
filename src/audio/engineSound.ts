@@ -49,11 +49,12 @@ export class SomMotor {
     this.partidaOsc.start();
   }
 
-  atualizar(rpm: number, carga: number, ligado: boolean, partida: boolean): void {
+  /** `cilindros`: 4 tempos → disparos por segundo = rpm/60 × cilindros/2. */
+  atualizar(rpm: number, carga: number, ligado: boolean, partida: boolean, cilindros = 4): void {
     const ctx = this.ctx;
     if (!ctx) return;
     const t = ctx.currentTime;
-    const disparo = Math.max(1, (Math.abs(rpm) / 60) * 1.5); // 3 cilindros, 4 tempos
+    const disparo = Math.max(1, (Math.abs(rpm) / 60) * (cilindros / 2));
     this.osc1.frequency.setTargetAtTime(disparo * 2, t, 0.02);
     this.osc2.frequency.setTargetAtTime(disparo, t, 0.02);
     this.filtro.frequency.setTargetAtTime(250 + carga * 1800 + Math.abs(rpm) * 0.15, t, 0.03);

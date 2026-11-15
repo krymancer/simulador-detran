@@ -1,11 +1,15 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import './style.css';
-import { KWID } from './sim/carConfig';
+import { MOBI } from './sim/carConfig';
 import { Comandos } from './sim/powertrain';
 import { DT_FISICA, iniciarRapier, Simulacao } from './sim/simulation';
 import { lerMapa, Mapa } from './world/parser';
 import { criarMapaTeste } from './world/testMap';
+import { criarMapaAutoescola } from './world/autoescola';
+import { decorarAutoescola } from './world/autoescolaDecoracao';
+import urlChao from './world/autoescola/chao.png?url';
+import { configurarCeu } from './world/ambiente';
 import { corSemaforo, CorSemaforo, Prova } from './exam/exam';
 import { Entrada, EstadoEntrada } from './input/input';
 import { Calibracao } from './input/calibration';
@@ -14,13 +18,14 @@ import { VisualCarro } from './render/carVisual';
 import { Retrovisores } from './render/mirrors';
 import { SomMotor } from './audio/engineSound';
 
-type ModoCamera = 'externa' | 'cockpit' | 'cima';
+type ModoCamera = 'cockpit' | 'externa' | 'cima';
 const MODOS: ModoCamera[] = ['cockpit', 'externa', 'cima'];
+const CARRO = MOBI;
 
 const app = document.getElementById('app')!;
 
 // ---------- Renderização ----------
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
@@ -28,19 +33,9 @@ renderer.shadowMap.type = THREE.PCFShadowMap;
 app.appendChild(renderer.domElement);
 
 const cena = new THREE.Scene();
-cena.background = new THREE.Color(0x9cc7e8);
-cena.fog = new THREE.Fog(0x9cc7e8, 80, 260);
+const ceu = configurarCeu(cena, renderer);
 
-cena.add(new THREE.HemisphereLight(0xdfefff, 0x4a5a3a, 1.1));
-const sol = new THREE.DirectionalLight(0xffffff, 2.2);
-sol.castShadow = true;
-sol.shadow.mapSize.set(2048, 2048);
-const sc = sol.shadow.camera;
-sc.left = -40; sc.right = 40; sc.top = 40; sc.bottom = -40; sc.near = 1; sc.far = 150;
-sol.shadow.bias = -0.0005;
-cena.add(sol, sol.target);
-
-const camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.05, 500);
+const camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.03, 800);
 window.addEventListener('resize', () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
   camera.aspect = window.innerWidth / window.innerHeight;
@@ -59,7 +54,7 @@ interface Jogo {
   prova: Prova;
   visual: VisualCarro;
   espelhos: Retrovisores;
-  lampadas: { id: string; luzes: Record<CorSemaforo, THREE.MeshStandardMaterial>; sem: Mapa['semaforos'][number] }[];
+  lampadas: { luzes: Record<CorSemaforo, THREE.MeshStandardMaterial>; sem: Mapa['semaforos'][number] }[];
   obstaculoMat: Map<object, THREE.MeshStandardMaterial[]>;
 }
 let jogo: Jogo | null = null;
@@ -73,7 +68,6 @@ function montarSemaforos(mapa: Mapa): Jogo['lampadas'] {
     const cores: [CorSemaforo, number, number][] = [['vermelho', 0xff2020, 0.28], ['amarelo', 0xffb000, 0], ['verde', 0x20ff50, -0.28]];
     for (const [nome, cor, y] of cores) {
       const m = new THREE.MeshStandardMaterial({ color: 0x222222, emissive: cor, emissiveIntensity: 0 });
-      // Lâmpadas nos dois lados (quem vem de qualquer direção enxerga).
       for (const lado of [1, -1]) {
         const l = new THREE.Mesh(new THREE.CircleGeometry(0.1, 12), m);
         l.position.set(lado * 0.181, y, 0);
@@ -83,7 +77,7 @@ function montarSemaforos(mapa: Mapa): Jogo['lampadas'] {
       luzes[nome] = m;
     }
     mapa.raiz.add(caixa);
-    out.push({ id: s.id, luzes, sem: s });
+    out.push({ luzes, sem: s });
   }
   return out;
 }
@@ -95,14 +89,11 @@ function carregarMapa(raiz: THREE.Object3D): void {
   }
   raiz.traverse((o) => {
     const m = o as THREE.Mesh;
-    if (m.isMesh) {
-      m.receiveShadow = true;
-      m.castShadow = true;
-    }
+    if (m.isMesh) m.receiveShadow = true;
   });
   const mapa = lerMapa(raiz);
   cena.add(raiz);
-  const sim = new Simulacao(mapa, KWID);
+  const sim = new Simulacao(mapa, CARRO);
   const visual = new VisualCarro(sim.carro);
   cena.add(visual.grupo);
 
@@ -125,21 +116,32 @@ function carregarMapa(raiz: THREE.Object3D): void {
     sim,
     prova: new Prova(sim),
     visual,
-    espelhos: new Retrovisores(visual.retrovisores),
+    espelhos: new Retrovisores(visual.retrovisores, visual.espelhos),
     lampadas: montarSemaforos(mapa),
     obstaculoMat,
   };
   entrada.reiniciarCabine();
   hud.reiniciar();
+  camIniciada = false;
 }
 
 function reiniciarCarro(): void {
   if (!jogo) return;
   jogo.sim.reposicionar();
+  jogo.sim.reporObstaculos();
   jogo.prova = new Prova(jogo.sim);
   for (const mats of jogo.obstaculoMat.values()) for (const m of mats) m.emissive?.setHex(0);
   entrada.reiniciarCabine();
   hud.reiniciar();
+}
+
+async function mapaAutoescola(): Promise<THREE.Object3D> {
+  const tex = await new THREE.TextureLoader().loadAsync(urlChao);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  const raiz = criarMapaAutoescola({ textura: tex });
+  decorarAutoescola(raiz);
+  return raiz;
 }
 
 async function carregarGLB(url: string): Promise<void> {
@@ -159,39 +161,42 @@ window.addEventListener('drop', (e) => {
 
 // ---------- Câmera ----------
 let modoCamera: ModoCamera = 'cockpit';
-const olhar = { yaw: 0, pitch: 0, arrastando: false };
+const olhar = { yaw: 0, pitch: 0, arrastando: false, yawSuave: 0 };
 renderer.domElement.addEventListener('pointerdown', (e) => { olhar.arrastando = true; renderer.domElement.setPointerCapture(e.pointerId); });
 renderer.domElement.addEventListener('pointerup', () => (olhar.arrastando = false));
 renderer.domElement.addEventListener('pointermove', (e) => {
   if (!olhar.arrastando) return;
-  olhar.yaw = Math.max(-2.2, Math.min(2.2, olhar.yaw - e.movementX * 0.004));
+  olhar.yaw = Math.max(-2.4, Math.min(2.4, olhar.yaw - e.movementX * 0.004));
   olhar.pitch = Math.max(-0.8, Math.min(0.6, olhar.pitch - e.movementY * 0.004));
 });
 const camPos = new THREE.Vector3();
 const camAlvo = new THREE.Vector3();
 let camIniciada = false;
 
-function atualizarCamera(dt: number): void {
+function atualizarCamera(dt: number, olharEntrada: number): void {
   if (!jogo) return;
   const g = jogo.visual.grupo;
   if (!olhar.arrastando) {
-    olhar.yaw *= Math.exp(-dt * 2);
-    olhar.pitch *= Math.exp(-dt * 2);
+    olhar.yaw *= Math.exp(-dt * 2.5);
+    olhar.pitch *= Math.exp(-dt * 2.5);
   }
+  // Direcional/analógico: olhar para os lados (virar a cabeça para os retrovisores/ponto cego).
+  const alvoYaw = olhar.yaw - olharEntrada * 1.25;
+  olhar.yawSuave += (alvoYaw - olhar.yawSuave) * Math.min(1, dt * 8);
   if (modoCamera === 'cockpit') {
     jogo.visual.olho.getWorldPosition(camera.position);
     g.getWorldQuaternion(camera.quaternion);
-    camera.rotateY(Math.PI + olhar.yaw); // câmera olha para −Z; carro aponta +Z
-    camera.rotateX(-0.08 + olhar.pitch);
-    camera.fov = 70;
+    camera.rotateY(Math.PI + olhar.yawSuave); // câmera olha para −Z; carro aponta +Z
+    camera.rotateX(-0.06 + olhar.pitch);
+    camera.fov = 68;
   } else {
     const frente = new THREE.Vector3(0, 0, 1).applyQuaternion(g.quaternion);
     frente.y = 0;
     frente.normalize();
     const alvoPos =
       modoCamera === 'externa'
-        ? g.position.clone().addScaledVector(frente.applyAxisAngle(new THREE.Vector3(0, 1, 0), olhar.yaw), -6.5).add(new THREE.Vector3(0, 2.4, 0))
-        : g.position.clone().add(new THREE.Vector3(0, 22, 0)).addScaledVector(frente, -0.01);
+        ? g.position.clone().addScaledVector(frente.applyAxisAngle(new THREE.Vector3(0, 1, 0), olhar.yawSuave), -6.5).add(new THREE.Vector3(0, 2.3, 0))
+        : g.position.clone().add(new THREE.Vector3(0, 24, 0)).addScaledVector(frente, -0.01);
     const a = camIniciada ? 1 - Math.exp(-dt * 6) : 1;
     camPos.lerp(alvoPos, a);
     camAlvo.lerp(g.position.clone().add(new THREE.Vector3(0, 0.6, 0)), camIniciada ? 1 - Math.exp(-dt * 12) : 1);
@@ -274,57 +279,78 @@ function quadro(agora: number): void {
 
   const t = jogo.sim.tempo;
   const piscando = Math.floor(t * 2.7) % 2 === 0;
-  if (ent.seta && piscando !== piscandoAnterior) som.clique();
+  if ((ent.seta || ent.alerta) && piscando !== piscandoAnterior) som.clique();
   piscandoAnterior = piscando;
 
   // Visual
-  jogo.visual.atualizar(jogo.sim.carro, ent.freio > 0.05, ent.seta, piscando, modoCamera === 'cockpit');
+  const kmh = Math.abs(jogo.sim.carro.velocidadeLongitudinal() * 3.6);
+  jogo.visual.atualizar(jogo.sim.carro, {
+    freando: ent.freio > 0.05,
+    re: trem.marchaEngatada === -1,
+    farol: ent.farol,
+    alerta: ent.alerta,
+    seta: ent.seta,
+    piscando,
+    cockpit: modoCamera === 'cockpit',
+    acelerador: ent.acelerador,
+    freio: ent.freio,
+    embreagem: ent.embreagem,
+    marcha: trem.marchaEngatada,
+    freioDeMao: ent.freioDeMao,
+    rpm: Math.max(0, trem.rpm),
+    velocidadeKmh: kmh,
+    ignicao: trem.ignicao || trem.ligado,
+    motorLigado: trem.ligado,
+    cinto: ent.cinto,
+  });
   for (const l of jogo.lampadas) {
     const cor = corSemaforo(l.sem, t);
     for (const k of Object.keys(l.luzes) as CorSemaforo[]) l.luzes[k].emissiveIntensity = k === cor ? 2.5 : 0.05;
   }
   for (const o of jogo.prova.obstaculosTocados) for (const m of jogo.obstaculoMat.get(o) ?? []) m.emissive?.setHex(0x880000);
 
-  const p = jogo.visual.grupo.position;
-  sol.position.set(p.x + 30, p.y + 60, p.z + 20);
-  sol.target.position.copy(p);
+  ceu.atualizarSombra(jogo.visual.grupo.position);
+  atualizarCamera(dt, ent.olhar);
+  som.atualizar(trem.rpm, trem.aceleradorEfetivo, trem.ligado, ent.partida && !bloqueiaPartida, CARRO.motor.cilindros);
 
-  atualizarCamera(dt);
-  som.atualizar(trem.rpm, trem.aceleradorEfetivo, trem.ligado, ent.partida && !bloqueiaPartida);
-
-  hud.atualizar(jogo.sim.carro, ent, jogo.prova, t, piscando, modoCamera);
+  hud.atualizar(jogo.sim.carro, ent, jogo.prova, t, piscando, modoCamera, dt);
   const faltando = entrada.semCalibracao();
-  hud.avisoCalibracao(faltando.length ? `“${faltando[0].id.slice(0, 40)}” ainda não foi calibrado — aperte F2` : null);
+  hud.avisoCalibracao(faltando.length ? `“${faltando[0].id.slice(0, 40)}” não tem mapeamento conhecido — configure em F2` : null);
 
+  if (modoCamera === 'cockpit') jogo.espelhos.render(renderer, cena);
   renderer.render(cena, camera);
-  if (modoCamera === 'cockpit') jogo.espelhos.render(renderer, cena, window.innerWidth, window.innerHeight);
 }
 
 // ---------- Início ----------
 async function iniciar(): Promise<void> {
   await iniciarRapier();
-  const param = new URLSearchParams(location.search).get('mapa');
-  if (param) {
-    try {
-      await carregarGLB(param);
-    } catch (err) {
-      console.error(err);
-      carregarMapa(criarMapaTeste());
-    }
-  } else {
+  const params = new URLSearchParams(location.search);
+  const glb = params.get('mapa');
+  try {
+    if (glb) await carregarGLB(glb);
+    else carregarMapa(params.get('pista') === 'treino' ? criarMapaTeste() : await mapaAutoescola());
+  } catch (err) {
+    console.error(err);
     carregarMapa(criarMapaTeste());
   }
   requestAnimationFrame(quadro);
 
   const inicio = document.getElementById('inicio')!;
-  inicio.querySelector<HTMLButtonElement>('[data-acao="jogar"]')!.onclick = () => {
+  const fecharInicio = () => {
     som.iniciar();
     inicio.classList.add('oculto');
   };
+  inicio.querySelector<HTMLButtonElement>('[data-acao="jogar"]')!.onclick = fecharInicio;
+  if (params.get('inicio') === '0') inicio.classList.add('oculto');
+  const cam = params.get('camera') as ModoCamera | null;
+  if (cam && MODOS.includes(cam)) modoCamera = cam;
   inicio.querySelector<HTMLButtonElement>('[data-acao="calibrar"]')!.onclick = () => {
-    som.iniciar();
-    inicio.classList.add('oculto');
+    fecharInicio();
     calibracao.abrir();
+  };
+  inicio.querySelector<HTMLButtonElement>('[data-acao="treino"]')!.onclick = () => {
+    fecharInicio();
+    carregarMapa(criarMapaTeste());
   };
 }
 

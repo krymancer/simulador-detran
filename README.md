@@ -1,6 +1,6 @@
 # Simulador de prova prática (DETRAN)
 
-three.js + Rapier + física própria de carro manual (Renault Kwid 1.0). Gráficos low-poly; o foco é a física e a mecânica.
+three.js + Rapier + física própria de carro manual (Fiat Mobi 1.0; também tem o Renault Kwid 1.0). O foco é a física e a mecânica.
 
 ```bash
 npm install
@@ -17,7 +17,10 @@ npm test         # testes de física e da prova (headless, Node)
 | `src/sim/vehicle.ts` | Suspensão por raycast, pneu lateral (Pacejka simplificado + “cerdas” para não escorregar parado), Ackermann, arrasto. Aplica forças no corpo rígido do Rapier. |
 | `src/sim/simulation.ts` | Mundo Rapier a 200 Hz. |
 | `src/world/parser.ts` | Lê qualquer cena three.js/GLB pelas **convenções de nome** abaixo. |
-| `src/world/testMap.ts` | Mapa de teste feito em código, com as mesmas convenções (serve de exemplo). |
+| `src/world/autoescola.ts` | Pista da autoescola, gerada da planta (`assets-fonte/mapa-autoescola.png`) por `node scripts/gerar-mapa.mjs`: textura do chão + grade de calçadas/meio-fio (15 cm). Baliza, faixas de pedestre, zonas de PARE e spawn ficam aqui. |
+| `src/world/autoescolaDecoracao.ts` | Placas (CTB), árvores e prédios da pista da autoescola. |
+| `src/world/placas.ts`, `src/world/ambiente.ts` | Placas de trânsito brasileiras e cenário (árvores, prédios, céu). |
+| `src/world/testMap.ts` | Pista de treino (rampa, semáforo), feita com as mesmas convenções de nome (serve de exemplo). |
 | `src/exam/regras.ts` | Tabela de faltas, gravidade, pontos e limite. **Confira com a resolução do CONTRAN vigente.** |
 | `src/exam/exam.ts` | Avaliador: detecta as faltas a cada passo da física. |
 | `src/input/` | Teclado + Gamepad API (controle, G29, câmbio H) e a tela de calibração (F2). |
@@ -37,18 +40,21 @@ O jogo entende os objetos pelo **nome**:
 | `CONE_<n>` | Cone (tocar = falta). |
 | `ZONA_BALIZA` | Caixa da vaga. O carro precisa terminar inteiro dentro, parado. O cronômetro começa quando você engata a ré perto dela. |
 | `ZONA_RAMPA` | Caixa cobrindo a subida. Parar e recuar mais de 40 cm = falta. |
+| `ZONA_PARE_<n>` | Área antes de uma placa PARE (o eixo +Z local aponta no sentido da via). Sair pela frente sem ter parado = falta. |
 | `FAIXA_PEDESTRE_<n>` | Caixa da faixa. Parar em cima = falta. |
 | `SEMAFORO_<id>` | Poste; o jogo cria as luzes em cima. Propriedades opcionais: `verde`, `amarelo`, `vermelho` (s), `defasagem`. |
 | `LINHA_PARADA_<id>` | Linha de retenção do `SEMAFORO_<id>`. Cruzar no vermelho = eliminatória. |
 | `SPAWN_CARRO` | Empty onde o carro nasce, **apontando para o +Y do Blender** (seta verde). |
 
+Objetos com a propriedade customizada `colisor` (`{raio, altura}` ou `{meiaLargura, meiaAltura, meiaProfundidade}`) viram sólidos em que o carro bate (postes, árvores, muros). Cones e balizas são soltos: caem se o carro bater.
+
 Zonas são caixas (o jogo usa o bounding box do objeto, com rotação e escala) e ficam invisíveis. Maiúsculas e minúsculas não importam, e o sufixo `.001` do Blender é ignorado. A malha visual e a de colisão podem ser objetos diferentes: o visual pode ficar bonito sem afetar a física.
 
 ## Volante G29
 
-- No PC, chave na posição **PS3**. No Linux, o kernel (`hid-logitech`) já reconhece.
-- Abra a calibração com **F2** e siga o assistente: gire, pise em cada pedal, engate cada marcha do câmbio H e aperte os botões. Fica salvo no navegador.
-- A rotação do G29 (900°) é mapeada no curso total do volante do carro (3 voltas).
+- No PC, chave na posição **PS3**. Já vem mapeado (Windows e Linux), sem calibrar: pedais, câmbio H (marchas 1–5 e ré), borboletas = setas, X freio de mão, △ partida, □ cinto, ○ farol, L2 pisca-alerta, R2 câmera, Share reinicia, Options encerra, direcional olha para os lados.
+- Em **F2** fica a tabela ação → eixo/botão, com o valor ao vivo. Dá pra **mudar um comando de cada vez**, inverter um eixo ou remover. Fica salvo no navegador.
+- O volante do Mobi tem 2,5 voltas de batente a batente (900°), igual ao G29: a rotação é 1:1.
 
 ## Próximos passos
 

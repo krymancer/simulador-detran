@@ -64,6 +64,8 @@ export class Prova {
   private ancoraRampa: { pos: THREE.Vector3; frente: THREE.Vector3 } | null = null;
   private faixaMultada = false;
   private dentroLinha = new Map<Zona, boolean>();
+  private estadoPare = new Map<Zona, { dentro: boolean; parou: boolean }>();
+  private derrubados = new Set<Obstaculo>();
   balizaInicio: number | null = null;
   balizaConcluida: number | null = null;
   private balizaEstourou = false;
@@ -216,6 +218,15 @@ export class Prova {
       }
     }
 
+    // Baliza derrubada
+    for (const o of sim.mapa.obstaculos) {
+      if (o.tipo === 'baliza' && !this.derrubados.has(o) && sim.derrubado(o)) {
+        this.derrubados.add(o);
+        this.obstaculosTocados.add(o);
+        this.falta('derrubou_baliza');
+      }
+    }
+
     // Parado?
     this.paradoTempo = vAbs < 0.05 ? this.paradoTempo + dt : 0;
 
@@ -252,6 +263,19 @@ export class Prova {
           if (sem && corSemaforo(sem, t) === 'vermelho') this.falta('avancou_vermelho');
         }
         this.dentroLinha.set(z, dentro);
+      } else if (z.tipo === 'pare') {
+        const dentro = dentroDaZona(z, g.pos, _tmp) || dentroDaZona(z, g.paraChoque, _tmp);
+        const e = this.estadoPare.get(z) ?? { dentro: false, parou: false };
+        if (dentro) {
+          if (!e.dentro) e.parou = false;
+          if (vAbs < 0.1) e.parou = true;
+        } else if (e.dentro && v > 0.3 && !e.parou) {
+          // Saiu pela frente sem ter parado — só conta no sentido da via (eixo +Z local da zona).
+          const sentido = new THREE.Vector3().setFromMatrixColumn(new THREE.Matrix4().copy(z.inversa).invert(), 2).normalize();
+          if (sentido.dot(g.frente) > 0.5) this.falta('nao_parou_pare');
+        }
+        e.dentro = dentro;
+        this.estadoPare.set(z, e);
       } else if (z.tipo === 'baliza') {
         if (this.balizaConcluida !== null) continue;
         if (this.balizaInicio === null && trem.marchaEngatada === -1 && g.pos.distanceTo(z.centro) < 12) {

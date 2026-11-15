@@ -1,6 +1,8 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { KWID } from '../src/sim/carConfig';
+import { CarConfig, KWID, MOBI } from '../src/sim/carConfig';
+
+let cfgAtual: CarConfig = KWID;
 import { Comandos, COMANDOS_NEUTROS } from '../src/sim/powertrain';
 import { iniciarRapier, Simulacao, HZ_FISICA } from '../src/sim/simulation';
 import { lerMapa } from '../src/world/parser';
@@ -17,7 +19,7 @@ function mapaTeste(graus = 0): Simulacao {
   spawn.name = 'SPAWN_CARRO';
   spawn.rotation.y = Math.PI; // −Z local → +Z mundo
   raiz.add(spawn);
-  return new Simulacao(lerMapa(raiz), KWID);
+  return new Simulacao(lerMapa(raiz), cfgAtual);
 }
 
 function rodar(sim: Simulacao, segundos: number, cmd: (t: number) => Partial<Comandos>, cada?: (t: number) => boolean | void): number {
@@ -56,7 +58,11 @@ beforeAll(async () => {
   await iniciarRapier();
 });
 
-describe('física do Kwid', () => {
+for (const cfg of [KWID, MOBI]) describe(`física: ${cfg.nome}`, () => {
+  beforeAll(() => {
+    cfgAtual = cfg;
+  });
+
   it('assenta na suspensão e fica parado', () => {
     const sim = mapaTeste();
     rodar(sim, 3, () => ({}));
@@ -65,7 +71,7 @@ describe('física do Kwid', () => {
     const v = Math.hypot(lv.x, lv.z);
     const comp = sim.carro.rodas.map((r) => r.comprimento.toFixed(3));
     console.log('altura CG', p.y.toFixed(3), 'comprimentos', comp.join(' '), 'v', v.toFixed(4));
-    expect(Math.abs(p.y - KWID.alturaCG)).toBeLessThan(0.05);
+    expect(Math.abs(p.y - cfgAtual.alturaCG)).toBeLessThan(0.05);
     expect(v).toBeLessThan(0.01);
   });
 
@@ -75,7 +81,7 @@ describe('física do Kwid', () => {
     rodar(sim, 3, () => ({}));
     console.log('marcha lenta', sim.carro.trem.rpm.toFixed(0));
     expect(sim.carro.trem.ligado).toBe(true);
-    expect(Math.abs(sim.carro.trem.rpm - KWID.motor.rpmMarchaLenta)).toBeLessThan(80);
+    expect(Math.abs(sim.carro.trem.rpm - cfgAtual.motor.rpmMarchaLenta)).toBeLessThan(80);
   });
 
   it('soltar a embreagem de uma vez em 1ª sem acelerar → apaga', () => {
@@ -144,7 +150,7 @@ describe('física do Kwid', () => {
     const q = sim.carro.corpo.rotation();
     const f = new THREE.Vector3(0, 0, 1).applyQuaternion(new THREE.Quaternion(q.x, q.y, q.z, q.w));
     sim.carro.corpo.setLinvel({ x: f.x * 16.67, y: 0, z: f.z * 16.67 }, true);
-    sim.carro.trem.omegaRoda.fill(16.67 / KWID.roda.raio);
+    sim.carro.trem.omegaRoda.fill(16.67 / cfgAtual.roda.raio);
     const p0 = pos(sim);
     rodar(sim, 6, () => ({ freio: 1, embreagem: 1, freioDeMao: false }), () => sim.carro.velocidade() < 0.05);
     const d = pos(sim).distanceTo(p0);

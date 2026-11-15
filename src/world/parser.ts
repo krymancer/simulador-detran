@@ -10,6 +10,8 @@ import * as THREE from 'three';
  *   CONE_<n>              Cone. Tocar = falta.
  *   ZONA_BALIZA[_n]       Vaga da baliza (caixa). O carro tem que terminar inteiro dentro.
  *   ZONA_RAMPA[_n]        Trecho da rampa: parar e recuar aqui = falta.
+ *   ZONA_PARE_<n>         Área antes de uma placa PARE: tem que parar totalmente dentro dela
+ *                         antes de sair pela frente.
  *   FAIXA_PEDESTRE_<n>    Faixa de pedestre: parar em cima = falta.
  *   SEMAFORO_<id>         Poste do semáforo (a lâmpada é criada pelo jogo em cima dele).
  *   LINHA_PARADA_<id>     Linha de retenção do SEMAFORO_<id>. Cruzar no vermelho = eliminatória.
@@ -33,15 +35,23 @@ export interface Colisor {
 export interface Obstaculo {
   nome: string;
   tipo: 'baliza' | 'cone';
+  /** Posição atual (atualizada pela física: cones e balizas podem ser derrubados). */
   x: number;
+  y: number;
   z: number;
   raio: number;
+  altura: number;
   objeto: THREE.Object3D;
 }
 
+/** Sólido estático simples (poste, tronco, prédio) para colisão com a carroceria. */
+export type Solido =
+  | { tipo: 'cilindro'; x: number; y: number; z: number; raio: number; altura: number }
+  | { tipo: 'caixa'; centro: THREE.Vector3; meia: THREE.Vector3; rotacao: THREE.Quaternion };
+
 export interface Zona {
   nome: string;
-  tipo: 'baliza' | 'rampa' | 'faixa_pedestre' | 'linha_parada';
+  tipo: 'baliza' | 'rampa' | 'faixa_pedestre' | 'linha_parada' | 'pare';
   id: string;
   /** Matriz mundo→local do objeto; a caixa é [min, max] no espaço local. */
   inversa: THREE.Matrix4;
@@ -64,6 +74,7 @@ export interface Mapa {
   obstaculos: Obstaculo[];
   zonas: Zona[];
   semaforos: Semaforo[];
+  solidos: Solido[];
   spawn: { posicao: THREE.Vector3; yaw: number };
 }
 
@@ -117,6 +128,37 @@ function caixaLocal(obj: THREE.Object3D): THREE.Box3 {
   return box;
 }
 
+/**
+ * Objetos com `userData.colisor` viram sólidos estáticos:
+ *   { raio, altura }                              → cilindro em pé na origem do objeto
+ *   { meiaLargura, meiaAltura, meiaProfundidade } → caixa (centro em y = meiaAltura acima da origem)
+ * e `userData.colisores = [{ x, z, raio, altura, y? }]` (ex.: árvores instanciadas), em coordenadas do objeto.
+ * No Blender: propriedades customizadas com esses nomes.
+ */
+function lerColisores(o: THREE.Object3D, ud: Record<string, unknown>, out: Solido[]): void {
+  const c = ud.colisor as Record<string, number> | undefined;
+  const p = new THREE.Vector3();
+  const q = new THREE.Quaternion();
+  const esc = new THREE.Vector3();
+  if (c) {
+    o.matrixWorld.decompose(p, q, esc);
+    if (c.raio !== undefined) {
+      out.push({ tipo: 'cilindro', x: p.x, y: p.y, z: p.z, raio: c.raio * esc.x, altura: (c.altura ?? 2) * esc.y });
+    } else if (c.meiaLargura !== undefined) {
+      const meia = new THREE.Vector3(c.meiaLargura * esc.x, (c.meiaAltura ?? 1) * esc.y, (c.meiaProfundidade ?? 1) * esc.z);
+      const centro = new THREE.Vector3(0, c.meiaAltura ?? 1, 0).applyMatrix4(o.matrixWorld);
+      out.push({ tipo: 'caixa', centro, meia, rotacao: q.clone() });
+    }
+  }
+  const lista = ud.colisores as { x: number; y?: number; z: number; raio: number; altura: number }[] | undefined;
+  if (Array.isArray(lista)) {
+    for (const k of lista) {
+      const w = new THREE.Vector3(k.x, k.y ?? 0, k.z).applyMatrix4(o.matrixWorld);
+      out.push({ tipo: 'cilindro', x: w.x, y: w.y, z: w.z, raio: k.raio, altura: k.altura });
+    }
+  }
+}
+
 export function lerMapa(raiz: THREE.Object3D): Mapa {
   raiz.updateMatrixWorld(true);
 
@@ -126,6 +168,7 @@ export function lerMapa(raiz: THREE.Object3D): Mapa {
     obstaculos: [],
     zonas: [],
     semaforos: [],
+    solidos: [],
     spawn: { posicao: new THREE.Vector3(0, 1, 0), yaw: 0 },
   };
 
@@ -134,9 +177,10 @@ export function lerMapa(raiz: THREE.Object3D): Mapa {
   raiz.traverse((o) => nos.push(o));
 
   for (const o of nos) {
+    const ud = o.userData ?? {};
+    lerColisores(o, ud, mapa.solidos);
     const n = normalizar(o.name || '');
     if (!n) continue;
-    const ud = o.userData ?? {};
 
     if (n.startsWith('COL_')) {
       const { vertices, indices } = trianglesMundo(o);
@@ -153,8 +197,10 @@ export function lerMapa(raiz: THREE.Object3D): Mapa {
         nome: o.name,
         tipo: n.startsWith('CONE_') ? 'cone' : 'baliza',
         x: c.x,
+        y: c.y,
         z: c.z,
         raio: Math.max(0.03, 0.5 * Math.max(s.x, s.z)),
+        altura: Math.max(0.1, s.y),
         objeto: o,
       });
     } else if (n.startsWith('ZONA_') || n.startsWith('FAIXA_PEDESTRE') || n.startsWith('LINHA_PARADA')) {
@@ -162,12 +208,13 @@ export function lerMapa(raiz: THREE.Object3D): Mapa {
       let id = '';
       if (n.startsWith('ZONA_BALIZA')) tipo = 'baliza';
       else if (n.startsWith('ZONA_RAMPA')) tipo = 'rampa';
+      else if (n.startsWith('ZONA_PARE')) { tipo = 'pare'; id = n.slice('ZONA_PARE_'.length); }
       else if (n.startsWith('FAIXA_PEDESTRE')) tipo = 'faixa_pedestre';
       else {
         tipo = 'linha_parada';
         id = n.slice('LINHA_PARADA_'.length);
       }
-      if (!n.startsWith('ZONA_BALIZA') && !n.startsWith('ZONA_RAMPA') && n.startsWith('ZONA_')) continue;
+      if (!/^ZONA_(BALIZA|RAMPA|PARE)/.test(n) && n.startsWith('ZONA_')) continue;
       const box = caixaLocal(o);
       mapa.zonas.push({
         nome: o.name,

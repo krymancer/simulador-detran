@@ -4,11 +4,12 @@
  * no localStorage, criado pela tela de calibração.
  */
 
-export const EIXOS = ['volante', 'acelerador', 'freio', 'embreagem'] as const;
+export const EIXOS = ['volante', 'acelerador', 'freio', 'embreagem', 'olhar'] as const;
 export const BOTOES = [
   'marcha1', 'marcha2', 'marcha3', 'marcha4', 'marcha5', 'marchaR',
   'marchaMais', 'marchaMenos',
-  'freioDeMao', 'partida', 'setaEsq', 'setaDir', 'cinto', 'camera', 'encerrar', 'reiniciar',
+  'freioDeMao', 'partida', 'setaEsq', 'setaDir', 'farol', 'alerta', 'cinto',
+  'olharEsq', 'olharDir', 'camera', 'encerrar', 'reiniciar',
 ] as const;
 
 export type AcaoEixo = (typeof EIXOS)[number];
@@ -19,20 +20,27 @@ export type Vinculo =
   /** Eixo: valor = (bruto − repouso) / (fim − repouso). No volante, repouso = centro e fim = batente direito. */
   | { tipo: 'eixo'; indice: number; repouso: number; fim: number }
   /** Botão (digital ou analógico, ex.: gatilhos do controle). */
-  | { tipo: 'botao'; indice: number };
+  | { tipo: 'botao'; indice: number }
+  /** Eixo usado como botão: “apertado” quando o eixo está perto de `alvo` (ex.: direcional/hat do volante). */
+  | { tipo: 'eixoBotao'; indice: number; alvo: number };
 
 export interface Perfil {
   id: string;
   tipo: 'volante' | 'controle';
   vinculos: Partial<Record<Acao, Vinculo>>;
   calibrado: boolean;
+  /** Versão do perfil padrão (para atualizar perfis salvos antigos). */
+  versao?: number;
 }
+
+const VERSAO_PERFIL = 2;
 
 export const NOMES_ACAO: Record<Acao, string> = {
   volante: 'Volante / direção',
   acelerador: 'Acelerador',
   freio: 'Freio',
   embreagem: 'Embreagem',
+  olhar: 'Olhar para os lados (eixo)',
   marcha1: '1ª marcha', marcha2: '2ª marcha', marcha3: '3ª marcha', marcha4: '4ª marcha', marcha5: '5ª marcha',
   marchaR: 'Ré',
   marchaMais: 'Subir marcha (sequencial)',
@@ -41,7 +49,11 @@ export const NOMES_ACAO: Record<Acao, string> = {
   partida: 'Partida / desligar',
   setaEsq: 'Seta esquerda',
   setaDir: 'Seta direita',
+  farol: 'Farol',
+  alerta: 'Pisca-alerta',
   cinto: 'Cinto de segurança',
+  olharEsq: 'Olhar à esquerda',
+  olharDir: 'Olhar à direita',
   camera: 'Trocar câmera',
   encerrar: 'Encerrar prova',
   reiniciar: 'Reiniciar carro',
@@ -66,21 +78,69 @@ function carregarPerfil(id: string): Perfil | null {
   }
 }
 
+/** Logitech G29/G923 (PlayStation) pelo id que o Chrome mostra: "... (Vendor: 046d Product: c24f)". */
+export function ehG29(gp: Gamepad): boolean {
+  return /046d.*(c24f|c260|c266|c267)|g29|g923/i.test(gp.id);
+}
+
 export function ehVolante(gp: Gamepad): boolean {
-  return /g29|g920|g923|driving force|wheel|046d.*c24f|c24f/i.test(gp.id) || gp.mapping !== 'standard';
+  return ehG29(gp) || /g920|g25|g27|driving force|wheel|fanatec|thrustmaster/i.test(gp.id) || gp.mapping !== 'standard';
+}
+
+/**
+ * Perfil padrão do G29, pela ordem do descritor HID do volante (hat, X volante,
+ * Z acelerador, Rz freio, Y embreagem) e por onde o Chrome coloca cada eixo:
+ *  - Windows/macOS: pelo “usage”  → volante 0, embreagem 1, acelerador 2, freio 5, direcional 9
+ *  - Linux (evdev): na ordem dos códigos → volante 0, embreagem 1, acelerador 2, freio 3, direcional 4/5
+ * Pedal solto = +1, no fundo = −1. Botões: X, □, ○, △, borboleta dir., borboleta esq.,
+ * R2, L2, Share, Options, R3, L3, câmbio 1ª–6ª (12–17), ré (18), +, −, …
+ */
+function perfilG29(gp: Gamepad): Perfil {
+  const linux = gp.axes.length < 9;
+  const pedal = (indice: number): Vinculo => ({ tipo: 'eixo', indice, repouso: 1, fim: -1 });
+  const vinculos: Partial<Record<Acao, Vinculo>> = {
+    volante: { tipo: 'eixo', indice: 0, repouso: 0, fim: 1 },
+    embreagem: pedal(1),
+    acelerador: pedal(2),
+    freio: pedal(linux ? 3 : 5),
+    marcha1: { tipo: 'botao', indice: 12 },
+    marcha2: { tipo: 'botao', indice: 13 },
+    marcha3: { tipo: 'botao', indice: 14 },
+    marcha4: { tipo: 'botao', indice: 15 },
+    marcha5: { tipo: 'botao', indice: 16 },
+    marchaR: { tipo: 'botao', indice: 18 },
+    freioDeMao: { tipo: 'botao', indice: 0 },  // X
+    cinto: { tipo: 'botao', indice: 1 },       // □
+    farol: { tipo: 'botao', indice: 2 },       // ○
+    partida: { tipo: 'botao', indice: 3 },     // △
+    setaDir: { tipo: 'botao', indice: 4 },     // borboleta direita
+    setaEsq: { tipo: 'botao', indice: 5 },     // borboleta esquerda
+    camera: { tipo: 'botao', indice: 6 },      // R2
+    alerta: { tipo: 'botao', indice: 7 },      // L2
+    reiniciar: { tipo: 'botao', indice: 8 },   // Share
+    encerrar: { tipo: 'botao', indice: 9 },    // Options
+    // Direcional: olhar para os lados
+    olharEsq: linux ? { tipo: 'eixoBotao', indice: 4, alvo: -1 } : { tipo: 'eixoBotao', indice: 9, alvo: 0.714 },
+    olharDir: linux ? { tipo: 'eixoBotao', indice: 4, alvo: 1 } : { tipo: 'eixoBotao', indice: 9, alvo: -0.428 },
+  };
+  return { id: gp.id, tipo: 'volante', calibrado: true, vinculos, versao: VERSAO_PERFIL };
 }
 
 export function perfilPadrao(gp: Gamepad): Perfil {
+  if (ehG29(gp)) return perfilG29(gp);
   if (gp.mapping === 'standard' && !ehVolante(gp)) {
     return {
       id: gp.id,
       tipo: 'controle',
       calibrado: true,
+      versao: VERSAO_PERFIL,
       vinculos: {
         volante: { tipo: 'eixo', indice: 0, repouso: 0, fim: 1 },
         acelerador: { tipo: 'botao', indice: 7 },
         freio: { tipo: 'botao', indice: 6 },
         embreagem: { tipo: 'eixo', indice: 3, repouso: 0, fim: 1 }, // analógico direito para baixo
+        olhar: { tipo: 'eixo', indice: 2, repouso: 0, fim: 1 },      // analógico direito para os lados
+        // Controle não tem câmbio H: marchas no RB/LB.
         marchaMais: { tipo: 'botao', indice: 5 },
         marchaMenos: { tipo: 'botao', indice: 4 },
         freioDeMao: { tipo: 'botao', indice: 0 },
@@ -89,18 +149,29 @@ export function perfilPadrao(gp: Gamepad): Perfil {
         partida: { tipo: 'botao', indice: 3 },
         reiniciar: { tipo: 'botao', indice: 8 },
         encerrar: { tipo: 'botao', indice: 9 },
+        farol: { tipo: 'botao', indice: 12 },
+        alerta: { tipo: 'botao', indice: 13 },
         setaEsq: { tipo: 'botao', indice: 14 },
         setaDir: { tipo: 'botao', indice: 15 },
       },
     };
   }
-  // Volante: o mapeamento dos pedais varia por sistema/navegador → precisa calibrar.
+  // Outro volante: só a direção; o resto se mapeia na tela de controles.
   return {
     id: gp.id,
     tipo: 'volante',
     calibrado: false,
+    versao: VERSAO_PERFIL,
     vinculos: { volante: { tipo: 'eixo', indice: 0, repouso: 0, fim: 1 } },
   };
+}
+
+/** Texto curto de um vínculo, para a tabela de controles. */
+export function descreverVinculo(v: Vinculo | undefined): string {
+  if (!v) return '—';
+  if (v.tipo === 'botao') return `Botão ${v.indice}`;
+  if (v.tipo === 'eixoBotao') return `Eixo ${v.indice} → ${v.alvo.toFixed(2)}`;
+  return `Eixo ${v.indice} (${v.repouso.toFixed(2)} → ${v.fim.toFixed(2)})`;
 }
 
 export function lerVinculo(gp: Gamepad, v: Vinculo | undefined): number {
@@ -110,6 +181,7 @@ export function lerVinculo(gp: Gamepad, v: Vinculo | undefined): number {
     return b ? b.value || (b.pressed ? 1 : 0) : 0;
   }
   const raw = gp.axes[v.indice];
+  if (v.tipo === 'eixoBotao') return raw !== undefined && Math.abs(raw - v.alvo) < 0.12 ? 1 : 0;
   if (raw === undefined || v.fim === v.repouso) return 0;
   return (raw - v.repouso) / (v.fim - v.repouso);
 }
@@ -127,6 +199,10 @@ export interface EstadoEntrada {
   partidaBorda: boolean;    // apertou neste frame
   seta: 'esquerda' | 'direita' | null;
   cinto: boolean;
+  farol: boolean;
+  alerta: boolean;
+  /** −1 (olhar à esquerda) … +1 (à direita) */
+  olhar: number;
   bordas: Set<AcaoBotao>;
   temVolante: boolean;
 }
@@ -135,6 +211,7 @@ const TECLAS: Partial<Record<string, AcaoBotao>> = {
   Digit1: 'marcha1', Digit2: 'marcha2', Digit3: 'marcha3', Digit4: 'marcha4', Digit5: 'marcha5',
   KeyR: 'marchaR',
   Space: 'freioDeMao', KeyI: 'partida', KeyQ: 'setaEsq', KeyE: 'setaDir', KeyC: 'cinto', KeyV: 'camera',
+  KeyL: 'farol', KeyK: 'alerta', KeyZ: 'olharEsq', KeyX: 'olharDir',
   Enter: 'encerrar', Backspace: 'reiniciar',
 };
 
@@ -158,6 +235,8 @@ export class Entrada {
   private seta: 'esquerda' | 'direita' | null = null;
   private setaVirou = false;
   private cinto = false;
+  private farol = false;
+  private alerta = false;
 
   /** Enquanto a calibração está aberta, o jogo não lê nada. */
   pausado = false;
@@ -180,7 +259,8 @@ export class Entrada {
   perfil(gp: Gamepad): Perfil {
     let p = this.perfis.get(gp.id);
     if (!p) {
-      p = carregarPerfil(gp.id) ?? perfilPadrao(gp);
+      const salvo = carregarPerfil(gp.id);
+      p = salvo && (salvo.versao ?? 1) >= VERSAO_PERFIL ? salvo : perfilPadrao(gp);
       this.perfis.set(gp.id, p);
     }
     return p;
@@ -207,6 +287,7 @@ export class Entrada {
     let marchaH: number | null = null;
     let temCambioH = false;
     let volanteControle: number | null = null;
+    let olhar = 0;
 
     if (!this.pausado) {
       // --- Gamepads ---
@@ -243,6 +324,8 @@ export class Entrada {
         acelerador = Math.max(acelerador, clamp01(zonaMorta(lerVinculo(gp, v.acelerador), 0.02)));
         freio = Math.max(freio, clamp01(zonaMorta(lerVinculo(gp, v.freio), 0.02)));
         embreagem = Math.max(embreagem, clamp01(zonaMorta(lerVinculo(gp, v.embreagem), p.tipo === 'controle' ? 0.1 : 0.02)));
+        const o = zonaMorta(Math.max(-1, Math.min(1, lerVinculo(gp, v.olhar))), 0.15);
+        if (Math.abs(o) > Math.abs(olhar)) olhar = o;
       }
 
       // Controle: volante com taxa limitada (simula girar o volante com as mãos)
@@ -295,6 +378,10 @@ export class Entrada {
     // --- Alavancas / botões com trava ---
     if (bordas.has('freioDeMao')) this.freioDeMao = !this.freioDeMao;
     if (bordas.has('cinto')) this.cinto = !this.cinto;
+    if (bordas.has('farol')) this.farol = !this.farol;
+    if (bordas.has('alerta')) this.alerta = !this.alerta;
+    if (segurando.has('olharEsq')) olhar = -1;
+    if (segurando.has('olharDir')) olhar = 1;
     if (bordas.has('setaEsq')) { this.seta = this.seta === 'esquerda' ? null : 'esquerda'; this.setaVirou = false; }
     if (bordas.has('setaDir')) { this.seta = this.seta === 'direita' ? null : 'direita'; this.setaVirou = false; }
     // A seta desarma sozinha quando o volante volta depois da curva.
@@ -315,6 +402,9 @@ export class Entrada {
       partidaBorda: bordas.has('partida'),
       seta: this.seta,
       cinto: this.cinto,
+      farol: this.farol,
+      alerta: this.alerta,
+      olhar,
       bordas,
       temVolante,
     };
@@ -324,6 +414,7 @@ export class Entrada {
     this.freioDeMao = true;
     this.cinto = false;
     this.seta = null;
+    this.alerta = false;
     this.marchaSequencial = 0;
   }
 }

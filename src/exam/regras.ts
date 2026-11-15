@@ -29,6 +29,8 @@ export interface Regra {
 
 export const REGRAS = {
   avancou_vermelho: { descricao: 'Avançou o sinal vermelho do semáforo', gravidade: 'eliminatoria' },
+  nao_parou_pare: { descricao: 'Não parou na placa PARE (parada obrigatória)', gravidade: 'eliminatoria' },
+  derrubou_baliza: { descricao: 'Derrubou baliza', gravidade: 'eliminatoria' },
   baliza_tempo: { descricao: 'Não completou a baliza no tempo', gravidade: 'eliminatoria' },
   subiu_calcada: { descricao: 'Subiu na calçada / meio-fio', gravidade: 'grave' },
   tocou_baliza: { descricao: 'Tocou em baliza', gravidade: 'grave' },

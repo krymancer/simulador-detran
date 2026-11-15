@@ -44,8 +44,12 @@ export class Veiculo {
   /** Torque autoalinhante somado das rodas dianteiras (N·m) — base do force feedback. */
   torqueAutoalinhante = 0;
 
-  constructor(mundo: RAPIER.World, cfg: CarConfig) {
+  /** Quais colisores a roda pode “pisar” (o chão do mapa; não cones nem postes). */
+  private readonly chao: ((c: RAPIER.Collider) => boolean) | undefined;
+
+  constructor(mundo: RAPIER.World, cfg: CarConfig, chao?: (c: RAPIER.Collider) => boolean) {
     this.mundo = mundo;
+    this.chao = chao;
     this.cfg = cfg;
     this.trem = new TremDeForca(cfg);
 
@@ -168,7 +172,7 @@ export class Veiculo {
         { x: -_cima.x, y: -_cima.y, z: -_cima.z },
       );
       const alcance = s.cursoMax + r;
-      const hit = this.mundo.castRayAndGetNormal(ray, alcance, true, undefined, undefined, undefined, corpo);
+      const hit = this.mundo.castRayAndGetNormal(ray, alcance, true, undefined, undefined, undefined, corpo, this.chao);
 
       const fwd = new THREE.Vector3();
       const side = new THREE.Vector3();

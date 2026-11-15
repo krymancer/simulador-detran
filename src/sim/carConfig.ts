@@ -178,3 +178,48 @@ export const KWID: CarConfig = {
 };
 
 export const RPM_PARA_RADS = (2 * Math.PI) / 60;
+
+/**
+ * Fiat Mobi 1.0 Fire Evo (4 cilindros, 8V), câmbio manual de 5 marchas (C513).
+ *
+ * Ficha: 3,566 m × 1,633 m × 1,502 m; entre-eixos 2,305 m; ~933 kg em ordem de
+ * marcha; 71 cv @ 6250 rpm e 9,5 kgf·m (≈93 N·m) @ 3850 rpm (gasolina);
+ * pneus 175/65 R14; ré 3,909 e diferencial 4,2.
+ * As relações de 1ª a 5ª e o resto (inércias, curva completa, embreagem) são
+ * ESTIMATIVAS — confira no manual.
+ */
+export const MOBI: CarConfig = {
+  ...KWID,
+  nome: 'Fiat Mobi 1.0 (aprox.)',
+  massa: 1010, // 933 kg + motorista
+  inercia: [1150, 1250, 330],
+  alturaCG: 0.56,
+  // Comprimento 3,566 m; largura 1,633 m; balanços ~0,70 m (frente) e ~0,56 m (trás).
+  carroceria: { meiaLargura: 0.8, meiaAltura: 0.42, meiaComprimento: 1.78, centro: [0, 0.2, -0.16] },
+  // Entre-eixos 2,305 m, ~61% do peso na frente.
+  eixoDianteiroZ: 0.9,
+  eixoTraseiroZ: -1.405,
+  bitolaDianteira: 1.41,
+  bitolaTraseira: 1.4,
+  roda: { raio: 0.292, inercia: 0.95 }, // 175/65 R14
+  suspensao: { ...KWID.suspensao, molaDianteira: 23000, molaTraseira: 18000, amortecedorDianteiro: 1900, amortecedorTraseiro: 1550 },
+  // 2,5 voltas = 900°: casa 1:1 com o G29.
+  direcao: { voltasBatenteABatente: 2.5, anguloMaxRoda: (36 * Math.PI) / 180 },
+  motor: {
+    ...KWID.motor,
+    cilindros: 4,
+    inercia: 0.13,
+    rpmMarchaLenta: 850,
+    rpmCorte: 6600,
+    curvaTorque: [
+      [0, 40], [500, 55], [1000, 72], [1500, 79], [2000, 84], [2500, 88], [3000, 91],
+      [3850, 93], [4500, 91], [5000, 88.5], [5500, 85], [6250, 79], [6800, 68], [7200, 50],
+    ],
+  },
+  cambio: {
+    relacoes: [4.273, 2.238, 1.444, 1.029, 0.838],
+    re: 3.909,
+    diferencial: 4.2,
+    eficiencia: 0.92,
+  },
+};
