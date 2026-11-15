@@ -27,7 +27,12 @@ export interface ContextoTreino {
    * norte da planta (−Z) = π, leste (+X) = π/2, sul = 0, oeste = −π/2.
    */
   teleportar: (pxX: number, pxY: number, yawRad: number) => void;
-  falar: (texto: string) => void;
+  /**
+   * Fala em português. 'cartao' = texto/dica do cartão atual: se o cartão mudar, a
+   * frase é descartada (ou cortada, se já estiver tocando). 'aviso' (padrão) =
+   * "Muito bem!", motivo de falha etc.: termina, mas não toca se já ficou velho na fila.
+   */
+  falar: (texto: string, tipo?: 'cartao' | 'aviso') => void;
 }
 
 export interface Licao {

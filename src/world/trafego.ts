@@ -44,6 +44,7 @@ const A_LAT = 1.6; // aceleração lateral confortável nas curvas (m/s²)
 const A_CONF = 2.5; // desaceleração planejada (m/s²)
 const A_FREIO = 4; // frenagem normal (m/s²)
 const A_EMERG = 8; // frenagem de emergência (m/s²)
+const GANHO_V = 3; // 1/s: rapidez com que a velocidade segue o alvo
 const OLHAR = 25; // alcance do “olhar” à frente (m)
 const N_OLHAR = Math.ceil(OLHAR / H);
 const DIST_SEGURA = 3; // folga para-choque a para-choque, parado (m)
@@ -367,6 +368,29 @@ interface Rota {
   fusoes: { sCeder: number; sJuncao: number; x: number; z: number; dx: number; dz: number }[];
 }
 
+/** Meio entre-eixos dos carros do trânsito (m): a direção é a corda entre os eixos. */
+const EIXO_MEIO = 1.25;
+const _pA = { x: 0, z: 0 };
+const _pB = { x: 0, z: 0 };
+
+/** Ponto da rota a `s` m do início, interpolado entre as amostras. */
+function pontoNaRota(r: Rota, s: number, out: { x: number; z: number }): void {
+  const u = mod(s, r.L) / H;
+  const k = Math.floor(u) % r.n;
+  const t = u - Math.floor(u);
+  const k1 = (k + 1) % r.n;
+  out.x = r.x[k] + (r.x[k1] - r.x[k]) * t;
+  out.z = r.z[k] + (r.z[k1] - r.z[k]) * t;
+}
+
+/** Velocidade de curva em `s`, interpolada entre as amostras. */
+function perfilEm(r: Rota, s: number): number {
+  const u = mod(s, r.L) / H;
+  const k = Math.floor(u) % r.n;
+  const t = u - Math.floor(u);
+  return r.perfil[k] + (r.perfil[(k + 1) % r.n] - r.perfil[k]) * t;
+}
+
 function montarRota(id: string, pts: P2[], zonas: ZonaTrafego[]): Rota {
   const r = reamostrar(pts, H, true);
   const n = r.length;
@@ -384,12 +408,27 @@ function montarRota(id: string, pts: P2[], zonas: ZonaTrafego[]): Rota {
     rota.dz[i] = dz / l;
   }
   // curvatura → velocidade
-  const K = 4;
+  // curvatura numa janela de ±3 m (as amostras têm ruído da planta), depois o
+  // mínimo em ±2 m e uma média: a velocidade-alvo varia suave, sem anda-e-freia na curva
+  const K = 6;
+  const bruto = new Float32Array(n);
   for (let i = 0; i < n; i++) {
     const a = (i - K + n) % n, b = (i + K) % n;
     const ang = Math.atan2(rota.dx[a] * rota.dz[b] - rota.dz[a] * rota.dx[b], rota.dx[a] * rota.dx[b] + rota.dz[a] * rota.dz[b]);
     const kappa = Math.abs(ang) / (2 * K * H);
-    rota.perfil[i] = Math.max(2.5, Math.min(V_MAX, Math.sqrt(A_LAT / Math.max(kappa, 1e-4))));
+    bruto[i] = Math.max(2.5, Math.min(V_MAX, Math.sqrt(A_LAT / Math.max(kappa, 1e-4))));
+  }
+  const M = 4;
+  const minimo = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    let m = Infinity;
+    for (let k = -M; k <= M; k++) m = Math.min(m, bruto[(i + k + n) % n]);
+    minimo[i] = m;
+  }
+  for (let i = 0; i < n; i++) {
+    let soma = 0;
+    for (let k = -M; k <= M; k++) soma += minimo[(i + k + n) % n];
+    rota.perfil[i] = soma / (2 * M + 1);
   }
   for (let volta = 0; volta < 2; volta++) {
     for (let i = n - 1; i >= 0; i--) {
@@ -1016,14 +1055,14 @@ export class Trafego {
 
   private posicionarCarro(c: CarroIA, teleporte: boolean): void {
     const r = c.rota;
-    const k = Math.floor(c.s / H) % r.n;
-    const t = c.s / H - Math.floor(c.s / H);
-    const k1 = (k + 1) % r.n;
-    c.x = r.x[k] + (r.x[k1] - r.x[k]) * t;
-    c.z = r.z[k] + (r.z[k1] - r.z[k]) * t;
-    // direção pela corda entre o eixo traseiro e o dianteiro (suave nas emendas)
-    const a = (k - 2 + r.n) % r.n, b = (k + 3) % r.n;
-    const dx = r.x[b] - r.x[a], dz = r.z[b] - r.z[a];
+    pontoNaRota(r, c.s, _pA);
+    c.x = _pA.x;
+    c.z = _pA.z;
+    // direção pela corda entre o eixo traseiro e o dianteiro, com os dois pontos
+    // interpolados ao longo da rota: varia de forma contínua (sem degraus a cada amostra)
+    pontoNaRota(r, c.s - EIXO_MEIO, _pA);
+    pontoNaRota(r, c.s + EIXO_MEIO, _pB);
+    const dx = _pB.x - _pA.x, dz = _pB.z - _pA.z;
     const l = Math.hypot(dx, dz) || 1;
     c.fx = dx / l;
     c.fz = dz / l;
@@ -1099,8 +1138,7 @@ export class Trafego {
     for (let i = 0; i < n; i++) {
       const c = this.carros[i];
       const r = c.rota;
-      const k = Math.floor(c.s / H) % r.n;
-      let alvo = Math.min(c.vMax, r.perfil[k]);
+      let alvo = Math.min(c.vMax, perfilEm(r, c.s));
       let folgaMin = Infinity;
       const limitar = (folga: number, vLider: number, distMin: number) => {
         folgaMin = Math.min(folgaMin, folga - distMin);
@@ -1201,15 +1239,22 @@ export class Trafego {
       }
 
       // dinâmica longitudinal
-      if (alvo > c.v) {
-        c.v = Math.min(alvo, c.v + c.acel * dt);
-        c.freando = c.v < 0.05;
+      // Segue o alvo com resposta de 1ª ordem (filtra o ruído da distância ao carro
+      // da frente, que fazia o carro alternar acelerar/frear a cada passo), limitado
+      // pela aceleração do carro e pela frenagem. Emergência: freia direto.
+      const vAntes = c.v;
+      const erro = alvo - c.v;
+      if (erro >= 0) {
+        c.v += Math.min(c.acel, erro * GANHO_V) * dt;
+      } else if (folgaMin < 0.5 || erro < -2) {
+        c.v = Math.max(alvo, c.v - A_EMERG * dt);
       } else {
-        const queda = c.v - alvo;
-        const a = folgaMin < 0.5 || queda > 2 ? A_EMERG : A_FREIO;
-        c.v = Math.max(alvo, c.v - a * dt);
-        c.freando = queda > 0.02 || c.v < 0.05;
+        c.v += Math.max(-A_FREIO, erro * GANHO_V) * dt;
       }
+      // luz de freio com histerese
+      const acelAtual = (c.v - vAntes) / dt;
+      if (acelAtual < -0.6 || c.v < 0.05 || (c.v < 0.4 && alvo < 0.5)) c.freando = true;
+      else if (acelAtual > 0.15) c.freando = false;
       if (c.v < 1e-3) c.v = 0;
       c.s = mod(c.s + c.v * dt, r.L);
       c.giroRodas += (c.v * dt) / 0.29;

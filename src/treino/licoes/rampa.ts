@@ -9,14 +9,32 @@ import { comoEngatar, engatada } from './comum';
  * mão e uma com o "freio de pé". Recuar mais de 30 cm ou deixar o motor morrer = refazer.
  */
 
-/** Ponto de parada na subida (px + yaw), na parte mais íngreme da rampa. */
-export const INICIO_RAMPA = naFaixa('anel_externo', 1481, 885, 0);
+/**
+ * Ponto de parada na subida (px + yaw): no começo da subida, com ~10% de inclinação
+ * (onde se costuma parar na prova). O meio da rampa chega a ~15%, pesado demais
+ * para a primeira saída de um 1.0.
+ */
+export const INICIO_RAMPA = naFaixa('anel_externo', 1481, 930, 0);
 
 export const RECUO_MAX = 0.3; // m
 export const DISTANCIA_SAIDA = 3; // m andados para frente = saiu
-/** Torque na embreagem que já segura o carro na subida (N·m). */
-export const TORQUE_PONTO_RAMPA = 16;
-const ESCALA = 45;
+/** Mínimo de torque na embreagem para contar como "ponto" (N·m), mesmo em subida suave. */
+export const TORQUE_PONTO_RAMPA = 8;
+
+/**
+ * Torque na embreagem (N·m) que segura o carro sozinho nesta subida, em 1ª:
+ * m·g·sen(θ)·r / (relação·diferencial·eficiência).
+ */
+function torqueSegura(x: Exec): number {
+  const c = x.sim.carro.cfg;
+  const sen = Math.max(0, x.pose().frente.y);
+  const g = c.cambio.relacoes[0] * c.cambio.diferencial * c.cambio.eficiencia;
+  return (c.massa * 9.81 * sen * c.roda.raio) / g;
+}
+/** Ponto na rampa: o carro já "puxa" ~80% do que precisa para não voltar (o freio ajuda no resto). */
+const alvoPonto = (x: Exec) => Math.max(TORQUE_PONTO_RAMPA, 0.8 * torqueSegura(x));
+/** Medidor: 1 = 1,5× o necessário para segurar o carro. Faixa verde a partir do alvo. */
+const FAIXA_RAMPA: [number, number] = [0.8 / 1.5, 0.95];
 
 /** Quanto o carro andou para frente desde a âncora (m; negativo = recuou). */
 function avanco(x: Exec): number {
@@ -45,7 +63,7 @@ function apagouOuRecuou(x: Exec): string | null {
   return null;
 }
 
-const pontoRampa = (x: Exec) => clamp01(Math.abs(x.trem.torqueEmbreagem) / ESCALA);
+const pontoRampa = (x: Exec) => clamp01(Math.abs(x.trem.torqueEmbreagem) / (1.5 * Math.max(TORQUE_PONTO_RAMPA / 0.8, torqueSegura(x))));
 
 function tentativa(pref: string, titulo: string, pe: boolean): Passo[] {
   const inicio = `${pref}_posicionar`;
@@ -103,10 +121,10 @@ function tentativa(pref: string, titulo: string, pe: boolean): Passo[] {
           ...comum,
           texto: 'Com o pé direito ainda no freio, solte a embreagem até o ponto, um pouco mais do que no plano: o giro cai e o carro "puxa" para a frente. Segure aí.',
           dica: 'No ponto certo o motor fica mais pesado mas não treme. Se tremer muito, pise um pouco a embreagem.',
-          detectar: (x) => engatada(x, 1) && x.ent.freio > 0.2 && Math.abs(x.trem.torqueEmbreagem) >= TORQUE_PONTO_RAMPA && segurar(x, 'p', true, 0.5),
+          detectar: (x) => engatada(x, 1) && x.ent.freio > 0.2 && Math.abs(x.trem.torqueEmbreagem) >= alvoPonto(x) && segurar(x, 'p', true, 0.5),
           progresso: pontoRampa,
           rotuloProgresso: 'Ponto da embreagem',
-          faixaBoa: [TORQUE_PONTO_RAMPA / ESCALA, 0.9],
+          faixaBoa: FAIXA_RAMPA,
         }
       : {
           id: `${pref}_ponto`,
@@ -115,10 +133,10 @@ function tentativa(pref: string, titulo: string, pe: boolean): Passo[] {
           ...comum,
           texto: (x) => `Acelere um pouquinho (${x.nome('acelerador')}), com o giro perto de 1500, e solte a embreagem até o ponto. Na subida o ponto é um pouco mais "fundo": o carro precisa puxar mais. Segure aí, com o freio de mão ainda puxado.`,
           dica: 'Você vai sentir o carro "abaixar" a traseira e o giro cair um pouco: é o ponto. O medidor verde ajuda.',
-          detectar: (x) => engatada(x, 1) && x.ent.acelerador > 0.05 && Math.abs(x.trem.torqueEmbreagem) >= TORQUE_PONTO_RAMPA && segurar(x, 'p', true, 0.5),
+          detectar: (x) => engatada(x, 1) && x.ent.acelerador > 0.05 && Math.abs(x.trem.torqueEmbreagem) >= alvoPonto(x) && segurar(x, 'p', true, 0.5),
           progresso: pontoRampa,
           rotuloProgresso: 'Ponto da embreagem',
-          faixaBoa: [TORQUE_PONTO_RAMPA / ESCALA, 0.9],
+          faixaBoa: FAIXA_RAMPA,
         },
     {
       id: `${pref}_sair`,

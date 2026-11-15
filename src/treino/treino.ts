@@ -61,6 +61,8 @@ export class Treino {
   private readonly ctx: ContextoTreino;
   private def: DefLicao | null = null;
   private indice = 0;
+  /** Muda a cada cartão novo: falas de um cartão antigo são descartadas (ver main.ts). */
+  geracao = 0;
   private fase: Fase = 'passo';
   private tFase = 0;
   private tPasso = 0;
@@ -299,7 +301,7 @@ export class Treino {
     if (!this.dicaMostrada && p.dica && this.tPasso > TEMPO_DICA) {
       this.dicaMostrada = true;
       const d = texto(p.dica, x);
-      if (d) this.ctx.falar(d);
+      if (d) this.ctx.falar(d, 'cartao');
     }
   }
 
@@ -345,6 +347,7 @@ export class Treino {
   }
 
   sair(): void {
+    this.geracao++;
     this.def = null;
     this.fase = 'passo';
     this.mensagem = null;
@@ -390,6 +393,7 @@ export class Treino {
   private irParaIndice(i: number): void {
     const def = this.def;
     if (!def) return;
+    this.geracao++;
     this.fase = 'passo';
     this.tFase = 0;
     this.tPasso = 0;
@@ -425,7 +429,7 @@ export class Treino {
       return;
     }
     const falado = texto(p.texto, this.exec);
-    if (falado) this.ctx.falar(p.quiz ? `${falado} ${p.quiz.pergunta}` : falado);
+    if (falado) this.ctx.falar(p.quiz ? `${falado} ${p.quiz.pergunta}` : falado, 'cartao');
   }
 
   /** Explica, pelo que aconteceu nos últimos ~2 s, por que o motor apagou. */

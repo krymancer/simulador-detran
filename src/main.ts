@@ -353,15 +353,46 @@ function perfilControles(): { dispositivo: Dispositivo; nomeDe: (acao: Acao) => 
   };
 }
 
-/** Voz em português, em fila (não corta a frase anterior). */
-function falar(texto: string): void {
-  if (!opcoes.valores.vozExaminador || typeof speechSynthesis === 'undefined') return;
-  const u = new SpeechSynthesisUtterance(texto);
+/**
+ * Voz do treino em português, em fila própria. Cada frase lembra de qual cartão
+ * do treino ela é (`treino.geracao`): quando o cartão muda, as frases antigas
+ * que ainda estão na fila são descartadas, e um texto de cartão antigo que
+ * esteja tocando é cortado. Assim a voz sempre fala do cartão que está na tela.
+ */
+interface Fala { texto: string; tipo: 'cartao' | 'aviso'; ger: number }
+const filaFala: Fala[] = [];
+let falando: { fala: Fala; u: SpeechSynthesisUtterance } | null = null;
+let geracaoFalada = 0;
+
+function proximaFala(): void {
+  if (typeof speechSynthesis === 'undefined') return;
+  const ger = treino.geracao;
+  if (falando && falando.fala.ger !== ger && falando.fala.tipo === 'cartao') {
+    const u = falando.u;
+    falando = null;
+    u.onend = u.onerror = null;
+    speechSynthesis.cancel();
+  }
+  while (filaFala.length && filaFala[0].ger !== ger) filaFala.shift();
+  if (falando || !filaFala.length) return;
+  const fala = filaFala.shift()!;
+  const u = new SpeechSynthesisUtterance(fala.texto);
   u.lang = 'pt-BR';
   const voz = speechSynthesis.getVoices().find((v) => v.lang.toLowerCase().startsWith('pt'));
   if (voz) u.voice = voz;
   u.volume = Math.min(1, opcoes.valores.volume + 0.2);
+  u.onend = u.onerror = () => {
+    if (falando?.u === u) falando = null;
+    proximaFala();
+  };
+  falando = { fala, u };
   speechSynthesis.speak(u);
+}
+
+function falar(texto: string, tipo: 'cartao' | 'aviso' = 'aviso'): void {
+  if (!opcoes.valores.vozExaminador || typeof speechSynthesis === 'undefined') return;
+  filaFala.push({ texto, tipo, ger: treino.geracao });
+  proximaFala();
 }
 
 let entAtual: EstadoEntrada | null = null;
@@ -652,6 +683,11 @@ function quadro(agora: number): void {
   hud.atualizar(jogo.sim.carro, ent, jogo.prova, t, piscando, modoCamera, dt);
   // Treino guiado
   if (emTreino) treino.atualizar(dt);
+  if (treino.geracao !== geracaoFalada) {
+    // cartão mudou (ou saiu do treino): descarta/corta falas do cartão anterior
+    geracaoFalada = treino.geracao;
+    proximaFala();
+  }
   uiTreino.atualizar();
   guias.atualizar(treino, dt);
   aplicarModoTreino();
