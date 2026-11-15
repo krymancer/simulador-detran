@@ -25,6 +25,8 @@ export interface EstadoVisual {
   marcha: number;              // -1 R, 0 N, 1..5
   freioDeMao: boolean;
   rpm: number; velocidadeKmh: number; ignicao: boolean; motorLigado: boolean; cinto: boolean;
+  /** Tira a mão direita do volante (treino mostrando o câmbio/freio de mão: o braço tapava a vista). */
+  semMaoDireita?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -1509,6 +1511,9 @@ export class VisualCarro {
     this.maos.rotation.set(VOLANTE_INCL, 0, 0);
     this.maos.rotateZ(clamp(pegada, -1.3, 1.3));
     this.maos.updateMatrix();
+    const semDireita = !!e.semMaoDireita && e.cockpit;
+    this.maos.children[1].visible = !semDireita; // lado −1 = mão direita (do lado do console)
+    this.antebracos[1].visible = !semDireita;
     for (let k = 0; k < 2; k++) {
       const p = _p.copy(this.punhos[k]).applyMatrix4(this.maos.matrix);
       const d = _d.copy(this.cotovelos[k]).sub(p);

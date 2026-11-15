@@ -607,6 +607,7 @@ function quadro(agora: number): void {
     seta: ent.seta,
     piscando,
     cockpit: modoCamera === 'cockpit',
+    semMaoDireita: (focoCamera === 'cambio' || focoCamera === 'freioDeMao') && focoPeso > 0.3,
     acelerador: ent.acelerador,
     freio: ent.freio,
     embreagem: ent.embreagem,
