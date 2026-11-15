@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Simulador Prova Detran</title>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <div id="inicio" class="painel inicio">
+      <h1>Simulador de prova prática</h1>
+      <p>Carro: Renault Kwid 1.0, câmbio manual. Física de motor, embreagem, câmbio, pneus e suspensão.</p>
+      <div class="colunas">
+        <div>
+          <h3>Volante (G29) / controle</h3>
+          <p>Calibre uma vez em <b>F2</b>. No G29, use a chave na posição <b>PS3</b>. Câmbio H funciona se você mapear as marchas.</p>
+          <p>Controle (padrão): RT acelera, LT freia, <b>analógico direito para baixo = embreagem</b>, RB/LB marchas, A freio de mão, Y partida, X cinto, B câmera, D-pad ◀▶ setas.</p>
+        </div>
+        <div>
+          <h3>Teclado</h3>
+          <p>W/S ou ↑/↓ acelerador e freio · A/D ou ←/→ direção · <b>Shift</b> embreagem (solta devagar) · 1–5 marchas, R ré, N neutro · Espaço freio de mão · <b>I</b> partida (segure) · Q/E setas · C cinto · V câmera · Enter encerra a prova · Backspace reinicia · H ajuda</p>
+        </div>
+      </div>
+      <p class="dica">Pra dar partida: embreagem no fundo e segure a partida. Pra sair: cinto, seta esquerda, 1ª, ache o ponto da embreagem, solte o freio de mão.</p>
+      <p class="dica">Arraste um <code>.glb</code> exportado do Blender para a janela para trocar o mapa.</p>
+      <div class="botoes">
+        <button data-acao="jogar">Começar</button>
+        <button data-acao="calibrar">Calibrar volante/controle</button>
+      </div>
+    </div>
+
+    <div id="ajuda" class="painel ajuda oculto">
+      <h2>Ajuda</h2>
+      <p><b>Teclado:</b> W/S acelerador/freio · A/D direção · Shift embreagem · 1–5/R/N marchas · Espaço freio de mão · I partida · Q/E setas · C cinto · V câmera · Enter encerrar · Backspace reiniciar · F2 calibração</p>
+      <p><b>Cockpit:</b> arraste o mouse para olhar em volta. Os retrovisores aparecem só no cockpit.</p>
+      <p><b>Prova:</b> começa quando o motor pega. Faltas: motor apagar, recuar na rampa, tocar baliza/cone, subir na calçada, banguela, sem seta/cinto, freio de mão puxado, avançar o vermelho, parar na faixa, estourar o tempo da baliza.</p>
+      <p>H fecha esta ajuda.</p>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
