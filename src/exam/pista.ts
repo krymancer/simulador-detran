@@ -1,6 +1,11 @@
 import * as THREE from 'three';
 import type { Mapa } from '../world/parser';
 import { Faixa, FAIXAS, ProjecaoFaixa, projetar } from '../world/vias';
+import { px } from '../world/autoescola';
+import divisoriaJson from '../world/autoescola/divisoria.json';
+
+/** Uma amostra da linha amarela contínua do anel (mundo): centro da tinta e normal para o anel interno. */
+interface AmostraLinha { x: number; z: number; nx: number; nz: number }
 
 /**
  * Leitura das faixas (vias.ts) para a prova: em que faixa o carro está, se ela é
@@ -30,6 +35,8 @@ export class Pista {
   readonly interno: Faixa | null;
   readonly externo: Faixa | null;
   readonly cruzamentos: Cruzamento[] = [];
+  /** Linha amarela contínua medida na planta (vazia fora da autoescola). */
+  private readonly linha: AmostraLinha[] = [];
 
   constructor(mapa: Mapa, faixas?: Faixa[]) {
     const usar = faixas ?? (ehAutoescola(mapa) ? FAIXAS : []);
@@ -38,6 +45,12 @@ export class Pista {
     this.interno = usar.find((f) => f.id === 'anel_interno') ?? null;
     this.externo = usar.find((f) => f.id === 'anel_externo') ?? null;
     if (!this.ativa) return;
+    if (!faixas) {
+      for (const a of divisoriaJson.pontos as { p: number[]; n: number[] }[]) {
+        const w = px(a.p[0], a.p[1]);
+        this.linha.push({ x: w.x, z: w.z, nx: a.n[0], nz: a.n[1] });
+      }
+    }
 
     // Cruzamentos: pontas da avenida (entrada embaixo, saída em cima com as faixas de
     // pedestres) e a saída do estacionamento (projeção do spawn no anel).
@@ -73,6 +86,26 @@ export class Pista {
     const b = projetar(this.externo, p);
     const sep = Math.hypot(a.ponto.x - b.ponto.x, a.ponto.z - b.ponto.z);
     return sep > SEP_MIN && sep < SEP_MAX && a.direcao.dot(b.direcao) < -0.8;
+  }
+
+  /**
+   * Quanto o ponto p passou da linha amarela contínua para o lado oposto ao do
+   * anel `doLado` (m; negativo = ainda do lado certo). null onde não há linha
+   * contínua (tracejado, cruzamentos) ou fora da autoescola.
+   */
+  alemDaLinha(p: THREE.Vector3, doLado: 'interno' | 'externo'): number | null {
+    let melhor: AmostraLinha | null = null;
+    let bd = Infinity;
+    for (const a of this.linha) {
+      const d = (p.x - a.x) ** 2 + (p.z - a.z) ** 2;
+      if (d < bd) { bd = d; melhor = a; }
+    }
+    if (!melhor || bd > 3 * 3) return null;
+    const dx = p.x - melhor.x, dz = p.z - melhor.z;
+    const normal = dx * melhor.nx + dz * melhor.nz; // + = lado do anel interno
+    const tangencial = Math.abs(dx * -melhor.nz + dz * melhor.nx);
+    if (tangencial > 0.6) return null; // na ponta de um trecho: depois dele não há linha
+    return doLado === 'interno' ? -normal : normal;
   }
 
   /** Faixa mais próxima de p (só se p estiver dentro dela, com folga). */

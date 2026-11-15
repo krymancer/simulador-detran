@@ -24,6 +24,7 @@ npm test         # testes de física e da prova (headless, Node)
 | `src/exam/examinador.ts`, `src/exam/pista.ts` | Examinador com percurso (11 etapas, voz em português) e regras de faixa: contramão, linha divisória, conversão sem seta. |
 | `src/render/relatorio.ts` | Relatório no fim da prova: faltas, mapa com trajeto e histórico das tentativas. |
 | `src/world/vias.ts` | Linhas centrais das faixas (gerado por `node scripts/gerar-vias.mjs`). |
+| `src/world/autoescola/divisoria.json` | Centro da linha amarela contínua do anel, medido na textura (`node scripts/gerar-divisoria.mjs`). A falta de transpor a linha usa ele: conta quando o pneu passa da tinta. |
 | `src/world/trafego.ts` | Carros e pedestres controlados pelo jogo. |
 | `src/audio/somCarro.ts` | Som sintetizado do motor, pneus, rodagem e eventos (marcha, freio de mão, cinto, seta, batida). |
 | `src/render/opcoes.ts` | Menu de opções (tecla O): carro, volante, horário (dia/entardecer/noite), qualidade, som. |

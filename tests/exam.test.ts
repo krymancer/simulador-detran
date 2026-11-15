@@ -123,6 +123,31 @@ describe('faltas novas da prova', () => {
     expect(b.codigos()).toEqual(['linha_divisoria']);
   });
 
+  it('linha amarela medida pela tinta: na curva de cima à direita, só o pneu passando da tinta conta; tracejado pode', async () => {
+    const int = faixaPorId('anel_interno');
+    const ext = faixaPorId('anel_externo');
+    const percurso = (b: Awaited<ReturnType<typeof bancada>>, s0: number, desvio: number, comp = 15) => {
+      b.percorrer(2.5, (t) => {
+        const a = amostrar(int, s0 + comp * (t / 2.5));
+        const paraFora = projetar(ext, a.ponto).ponto.sub(a.ponto).setY(0).normalize();
+        return { pos: a.ponto.clone().addScaledVector(paraFora, desvio), dir: a.direcao, vel: 6 };
+      });
+    };
+    const curva = projetar(int, px(1290, 166)).s;
+    // pneu chegando na tinta, sem passar dela (o critério antigo, pelo meio entre as faixas, já multava aqui)
+    let b = await bancada('autoescola');
+    percurso(b, curva, 1.1);
+    expect(b.codigos()).not.toContain('linha_divisoria');
+    // pneu já depois da tinta
+    b = await bancada('autoescola');
+    percurso(b, curva, 1.6);
+    expect(b.codigos()).toContain('linha_divisoria');
+    // linha tracejada da rua de baixo: cruzar é permitido
+    b = await bancada('autoescola');
+    percurso(b, projetar(int, px(1180, 1240)).s, 1.6, 8);
+    expect(b.codigos()).not.toContain('linha_divisoria');
+  });
+
   it('não dar preferência ao pedestre na faixa é gravíssima', async () => {
     const b = await bancada('autoescola');
     const faixa = b.mapa.zonas.find((z) => z.nome.toUpperCase() === 'FAIXA_PEDESTRE_1') as Zona;

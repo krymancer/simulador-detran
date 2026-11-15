@@ -22,6 +22,11 @@ import {
 
 export type CorSemaforo = 'verde' | 'amarelo' | 'vermelho';
 
+/** Meia largura do pneu (m), para a borda externa da roda. */
+const MEIA_LARGURA_PNEU = 0.09;
+/** Quanto a borda do pneu precisa passar do centro da linha amarela para contar (m). Tinta ≈ 12–15 cm. */
+const PNEU_ALEM_LINHA = 0.12;
+
 export function corSemaforo(s: Semaforo, t: number): CorSemaforo {
   const { verde, amarelo, vermelho } = s.tempos;
   const ciclo = verde + amarelo + vermelho;
@@ -249,10 +254,14 @@ export class Prova {
     const zT = cb.centro[2] - cb.meiaComprimento;
     const w = cb.meiaLargura;
     const canto = (x: number, z: number) => new THREE.Vector3(x, yBaixo, z).applyQuaternion(_q).add(pos);
+    const cfg = this.sim.carro.cfg;
+    // borda externa de cada pneu (meia largura do pneu ≈ 9 cm), no chão
+    const bf = cfg.bitolaDianteira / 2 + MEIA_LARGURA_PNEU, bt = cfg.bitolaTraseira / 2 + MEIA_LARGURA_PNEU;
     return {
       pos,
       frente,
       cantos: [canto(w, zF), canto(-w, zF), canto(w, zT), canto(-w, zT)],
+      pneus: [canto(bf, cfg.eixoDianteiroZ), canto(-bf, cfg.eixoDianteiroZ), canto(bt, cfg.eixoTraseiroZ), canto(-bt, cfg.eixoTraseiroZ)],
       paraChoque: canto(0, zF),
     };
   }
@@ -601,19 +610,24 @@ export class Prova {
       }
     }
 
-    // --- Linha divisória do anel: um canto da carroceria passa do meio entre as duas faixas.
+    // --- Linha divisória do anel: um pneu passa por cima da linha amarela (a borda
+    // externa do pneu fica mais de PNEU_ALEM_LINHA além do centro da linha, ou seja,
+    // já depois da tinta). O canto da carroceria passar por cima dela na curva não conta.
     if (pista.interno && pista.externo && v > 0.5 && !balizaEmCurso) {
       let cruzou = false;
       if (!pista.noCruzamento(g.pos) && pista.anelCoerente(g.pos)) {
         const ci = projetar(pista.interno, g.pos);
         const ce = projetar(pista.externo, g.pos);
-        const [minha, outra] = ci.distancia < ce.distancia ? [pista.interno, pista.externo] : [pista.externo, pista.interno];
-        if (Math.min(ci.distancia, ce.distancia) < minha.meiaLargura + 0.5) {
-          for (const c of g.cantos) {
+        const minha = ci.distancia < ce.distancia ? pista.interno : pista.externo;
+        // lado do carro = lado da linha pintada em que está o centro dele
+        const centro = pista.alemDaLinha(g.pos, 'interno');
+        if (centro !== null && Math.min(ci.distancia, ce.distancia) < minha.meiaLargura + 0.5) {
+          const lado = centro < 0 ? 'interno' : 'externo';
+          for (const c of g.pneus) {
             if (pista.noCruzamento(c)) continue;
-            const dm = projetar(minha, c).distancia;
-            const dout = projetar(outra, c).distancia;
-            if (dm - dout > 0.3) {
+            // distância medida até o centro da tinta amarela de verdade (divisoria.json)
+            const alem = pista.alemDaLinha(c, lado);
+            if (alem !== null && alem > PNEU_ALEM_LINHA) {
               cruzou = true;
               break;
             }
