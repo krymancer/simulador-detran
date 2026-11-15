@@ -11,6 +11,8 @@ export interface InfoTrafego {
   carros: { posicao: THREE.Vector3; velocidade: number }[];
   /** Acontecimentos desde a última leitura (o consumidor esvazia). */
   eventos: ('colisao_carro' | 'atropelou_pedestre')[];
+  /** Passagem de nível com luzes piscando / cancela baixando ou baixada. */
+  passagemFechada?: boolean;
 }
 
 export const INFO_TRAFEGO_VAZIA: InfoTrafego = { pedestres: [], carros: [], eventos: [] };

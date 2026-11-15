@@ -66,6 +66,8 @@ export interface Semaforo {
   topo: THREE.Vector3;
   tempos: { verde: number; amarelo: number; vermelho: number };
   defasagem: number;
+  /** Para onde as lâmpadas olham (yaw do +Z local do objeto) = de onde vêm os motoristas. */
+  yaw: number;
 }
 
 export interface Mapa {
@@ -240,6 +242,12 @@ export function lerMapa(raiz: THREE.Object3D): Mapa {
           vermelho: Number(ud.vermelho ?? 10),
         },
         defasagem: Number(ud.defasagem ?? 0),
+        yaw: (() => {
+          const q = new THREE.Quaternion();
+          o.matrixWorld.decompose(new THREE.Vector3(), q, new THREE.Vector3());
+          const f = new THREE.Vector3(0, 0, 1).applyQuaternion(q);
+          return Math.atan2(f.x, f.z);
+        })(),
       });
     } else if (n.startsWith('SPAWN_CARRO')) {
       const p = new THREE.Vector3();

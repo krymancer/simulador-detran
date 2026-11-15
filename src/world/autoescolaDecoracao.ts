@@ -1,8 +1,9 @@
 import * as THREE from 'three';
-import { ALTURA_CALCADA, lerGrade, METROS_POR_PX, px } from './autoescola';
+import { ALTURA_CALCADA, alturaTerreno, lerGrade, METROS_POR_PX, px } from './autoescola';
 import { CodigoPlaca, criarPlaca, OpcoesPlaca } from './placas';
 import { criarArvores, criarPredio } from './ambiente';
 import grade from './autoescola/grade.json';
+import { AREAS_LIVRES_FERROVIA_PX, CORREDOR_FERROVIA } from './ferrovia';
 
 /**
  * Placas (CTB), árvores e prédios da pista da autoescola. Usa canvas, então só
@@ -29,14 +30,15 @@ const PLACAS: Placa[] = [
   { codigo: 'A-2b', x: 300, y: 1160, face: [1, 0] },           // curva à direita (canto inferior esquerdo, indo para oeste)
   { codigo: 'A-6', x: 540, y: 1392, face: [-1, 0] },           // cruzamento à frente (planta)
   { codigo: 'A-6', x: 810, y: 1138, face: [1, 0] },            // cruzamento à frente (planta)
-  { codigo: 'R-1', x: 838, y: 300, face: DIAG },               // PARE no fim da avenida diagonal
-  { codigo: 'R-1', x: 905, y: 8, face: [1, 0] },               // PARE antes da faixa de pedestres (faixa de cima)
+  { codigo: 'A-14', x: 1000, y: 620, face: DIAG },             // semáforo à frente (subindo a avenida)
+  { codigo: 'A-14', x: 1180, y: -12, face: [1, 0] },           // semáforo à frente (faixa de cima, indo para oeste)
+  { codigo: 'A-14', x: 300, y: 470, face: [0, 1] },            // semáforo à frente (subindo pela esquerda)
   { codigo: 'A-32b', x: 430, y: 8, face: [-1, 0] },            // passagem de pedestres
   { codigo: 'R-19', x: 258, y: 1000, face: [0, 1], opts: { valor: 30 } },
   { codigo: 'R-19', x: 1530, y: 700, face: [0, -1], opts: { valor: 30 } },
   { codigo: 'R-19', x: 1190, y: 1010, face: DIAG, opts: { valor: 30 } },
   { codigo: 'R-6a', x: 1240, y: 860, face: DIAG },             // proibido estacionar (ao lado das áreas zebradas)
-  { codigo: 'R-2', x: 912, y: 1385, face: [0, 1] },            // dê a preferência ao sair do estacionamento
+  { codigo: 'R-1', x: 912, y: 1385, face: [0, 1] },            // PARE na saída do estacionamento
 ];
 
 function gradeElevada() {
@@ -78,6 +80,7 @@ export function decorarAutoescola(raiz: THREE.Object3D): void {
     }
     const g = criarPlaca(p.codigo, p.opts);
     g.position.copy(px(x, y, ALTURA_CALCADA));
+    g.position.y += alturaTerreno(g.position.x, g.position.z);
     g.rotation.y = Math.atan2(p.face[0], p.face[1]);
     g.name = `placa_${p.codigo}`;
     raiz.add(g);
@@ -90,9 +93,11 @@ export function decorarAutoescola(raiz: THREE.Object3D): void {
     for (let x = 0; x < grade.larguraPx; x += passo) {
       const jx = x + (rnd() - 0.5) * passo * 0.8;
       const jy = y + (rnd() - 0.5) * passo * 0.8;
+      // corredor da linha férrea e estação ficam sem árvores
+      if (AREAS_LIVRES_FERROVIA_PX.some((a) => jx > a.x0 - 25 && jx < a.x1 + 25 && jy > a.y0 - 25 && jy < a.y1 + 25)) continue;
       if (rnd() < 0.5 && livre(jx, jy, 2.6 / METROS_POR_PX)) {
         const w = px(jx, jy);
-        arvores.push({ x: w.x, z: w.z, y: ALTURA_CALCADA, semente: Math.floor(rnd() * 1e6) });
+        arvores.push({ x: w.x, z: w.z, y: ALTURA_CALCADA + alturaTerreno(w.x, w.z), semente: Math.floor(rnd() * 1e6) });
       }
     }
   }
@@ -105,6 +110,7 @@ export function decorarAutoescola(raiz: THREE.Object3D): void {
     const t = rnd() - 0.5;
     const x = lado < 2 ? t * (largM + 2 * d) : (lado === 2 ? -1 : 1) * (largM / 2 + d);
     const z = lado < 2 ? (lado === 0 ? -1 : 1) * (altM / 2 + d) : t * (altM + 2 * d);
+    if (z > 0 && x > CORREDOR_FERROVIA.xMin - 3 && x < CORREDOR_FERROVIA.xMax + 3) continue; // linha férrea saindo para o sul
     arvores.push({ x, z, y: ALTURA_CALCADA, semente: Math.floor(rnd() * 1e6) });
   }
   raiz.add(criarArvores(arvores));
@@ -127,6 +133,11 @@ export function decorarAutoescola(raiz: THREE.Object3D): void {
       const prof = 10 + rnd() * 8;
       const p = criarPredio(larg, alt, prof, Math.floor(rnd() * 1e6));
       const meio = s + larg / 2;
+      // a linha férrea sai para o sul: nenhum prédio em cima dela
+      if (eixo === 0 && cz > 0 && cx + s < CORREDOR_FERROVIA.xMax + 2 && cx + s + larg > CORREDOR_FERROVIA.xMin - 2) {
+        s += larg + 2;
+        continue;
+      }
       p.position.set(eixo === 0 ? cx + meio : cx + (rnd() - 0.5) * 6, ALTURA_CALCADA, eixo === 0 ? cz + (rnd() - 0.5) * 6 : cz + meio);
       // fachada voltada para a pista
       p.rotation.y = eixo === 0 ? (cz < 0 ? 0 : Math.PI) : cx < 0 ? Math.PI / 2 : -Math.PI / 2;

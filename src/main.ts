@@ -5,11 +5,14 @@ import { CarConfig, KWID, MOBI } from './sim/carConfig';
 import { Comandos } from './sim/powertrain';
 import { DT_FISICA, iniciarRapier, Simulacao } from './sim/simulation';
 import { lerMapa, Mapa } from './world/parser';
-import { criarMapaTeste } from './world/testMap';
 import { criarMapaAutoescola } from './world/autoescola';
 import { decorarAutoescola } from './world/autoescolaDecoracao';
 import urlChao from './world/autoescola/chao.png?url';
 import { configurarCeu } from './world/ambiente';
+import { atualizarIluminacaoPublica, criarIluminacaoPublica } from './world/iluminacao';
+import { FAIXAS } from './world/vias';
+import { AREAS_LIVRES_FERROVIA_PX } from './world/ferrovia';
+import { METROS_POR_PX } from './world/autoescola';
 import { corSemaforo, CorSemaforo, Prova } from './exam/exam';
 import { Entrada, EstadoEntrada } from './input/input';
 import { Calibracao } from './input/calibration';
@@ -22,6 +25,9 @@ import { Examinador } from './exam/examinador';
 import { UiExaminador } from './render/examinadorUi';
 import { mostrarRelatorio } from './render/relatorio';
 import { Trafego } from './world/trafego';
+import { Ferrovia } from './world/ferrovia';
+import { SomFerrovia } from './audio/somFerrovia';
+import { INFO_TRAFEGO_VAZIA, InfoTrafego } from './world/infoTrafego';
 
 type ModoCamera = 'cockpit' | 'externa' | 'cima';
 const MODOS: ModoCamera[] = ['cockpit', 'externa', 'cima'];
@@ -54,7 +60,9 @@ const calibracao = new Calibracao(entrada, app);
 let som = new SomCarro({ rpmMarchaLenta: MOBI.motor.rpmMarchaLenta, rpmCorte: MOBI.motor.rpmCorte });
 const opcoes = new Opcoes(app);
 const uiExaminador = new UiExaminador(app);
+const somFerrovia = new SomFerrovia();
 CARRO = opcoes.valores.carro === 'kwid' ? KWID : MOBI;
+ceu.definirHorario(opcoes.valores.horario, false);
 som = new SomCarro({ rpmMarchaLenta: CARRO.motor.rpmMarchaLenta, rpmCorte: CARRO.motor.rpmCorte });
 som.volume = opcoes.valores.volume;
 
@@ -72,6 +80,8 @@ function aplicarQualidade(c: Config): void {
   if (jogo) jogo.espelhos.intervaloLaterais = c.qualidade === 'alta' ? 2 : c.qualidade === 'media' ? 3 : 4;
   entrada.sensibilidade = c.sensibilidade;
   som.volume = c.volume;
+  somFerrovia.volume = c.volume;
+  if (ceu.horario !== c.horario) ceu.definirHorario(c.horario);
 }
 opcoes.aoMudar((c, antes) => {
   aplicarQualidade(c);
@@ -84,6 +94,8 @@ opcoes.aoMudar((c, antes) => {
   if ((c.trafego !== antes.trafego || c.pedestres !== antes.pedestres) && jogo) {
     removerTrafego();
     jogo.trafego = criarTrafego(jogo.sim, jogo.mapa, c);
+    const f = jogo.ferrovia;
+    if (jogo.trafego && f) jogo.trafego.passagemBloqueada = () => f.estado !== 'livre';
   }
   if (c.carro !== antes.carro && jogo) {
     CARRO = c.carro === 'kwid' ? KWID : MOBI;
@@ -107,6 +119,7 @@ interface Jogo {
   examinador: Examinador | null;
   relatorioMostrado: boolean;
   trafego: Trafego | null;
+  ferrovia: Ferrovia | null;
 }
 
 function criarTrafego(sim: Simulacao, mapa: Mapa, c: Config): Trafego | null {
@@ -126,23 +139,29 @@ let jogo: Jogo | null = null;
 
 function montarSemaforos(mapa: Mapa): Jogo['lampadas'] {
   const out: Jogo['lampadas'] = [];
+  const matCaixa = new THREE.MeshStandardMaterial({ color: 0x15171a, roughness: 0.5 });
   for (const s of mapa.semaforos) {
-    const caixa = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.95, 0.3), new THREE.MeshStandardMaterial({ color: 0x1a1a1a }));
-    caixa.position.copy(s.topo).add(new THREE.Vector3(0, 0.45, 0));
+    // Grupo focal (3 lâmpadas com pala) no topo do poste, virado para quem chega.
+    const cabeca = new THREE.Group();
+    cabeca.name = 'luzes_semaforo';
+    cabeca.position.copy(s.topo).add(new THREE.Vector3(0, 0.55, 0));
+    cabeca.rotation.y = s.yaw;
+    const caixa = new THREE.Mesh(new THREE.BoxGeometry(0.34, 1.0, 0.24), matCaixa);
+    caixa.castShadow = true;
+    cabeca.add(caixa);
     const luzes = {} as Record<CorSemaforo, THREE.MeshStandardMaterial>;
-    const cores: [CorSemaforo, number, number][] = [['vermelho', 0xff2020, 0.28], ['amarelo', 0xffb000, 0], ['verde', 0x20ff50, -0.28]];
+    const cores: [CorSemaforo, number, number][] = [['vermelho', 0xff2a1a, 0.31], ['amarelo', 0xffb000, 0], ['verde', 0x18ff6a, -0.31]];
     for (const [nome, cor, y] of cores) {
-      const m = new THREE.MeshStandardMaterial({ color: 0x222222, emissive: cor, emissiveIntensity: 0 });
-      for (const lado of [1, -1]) {
-        const l = new THREE.Mesh(new THREE.CircleGeometry(0.1, 12), m);
-        l.position.set(lado * 0.181, y, 0);
-        l.rotation.y = (lado * Math.PI) / 2;
-        caixa.add(l);
-      }
+      const m = new THREE.MeshStandardMaterial({ color: 0x1b1b1b, emissive: cor, emissiveIntensity: 0 });
+      const l = new THREE.Mesh(new THREE.CircleGeometry(0.11, 16), m);
+      l.position.set(0, y, 0.121);
+      const pala = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.13, 0.12, 14, 1, true, -Math.PI / 2, Math.PI), matCaixa);
+      pala.rotation.x = Math.PI / 2;
+      pala.position.set(0, y + 0.02, 0.18);
+      cabeca.add(l, pala);
       luzes[nome] = m;
     }
-    caixa.name = 'luzes_semaforo';
-    mapa.raiz.add(caixa);
+    mapa.raiz.add(cabeca);
     out.push({ luzes, sem: s });
   }
   return out;
@@ -151,6 +170,10 @@ function montarSemaforos(mapa: Mapa): Jogo['lampadas'] {
 function carregarMapa(raiz: THREE.Object3D): void {
   if (jogo) {
     removerTrafego();
+    if (jogo.ferrovia) {
+      cena.remove(jogo.ferrovia.grupo);
+      jogo.ferrovia.liberar();
+    }
     cena.remove(jogo.mapa.raiz, jogo.visual.grupo);
     jogo.sim.liberar();
   }
@@ -189,6 +212,7 @@ function carregarMapa(raiz: THREE.Object3D): void {
     examinador: ehAutoescola && opcoes.valores.examinador ? new Examinador(sim, prova, { voz: opcoes.valores.vozExaminador }) : null,
     relatorioMostrado: false,
     trafego: criarTrafego(sim, mapa, opcoes.valores),
+    ferrovia: null,
     visual,
     espelhos: new Retrovisores(visual.retrovisores, visual.espelhos),
     lampadas: montarSemaforos(mapa),
@@ -197,6 +221,13 @@ function carregarMapa(raiz: THREE.Object3D): void {
   entrada.reiniciarCabine();
   hud.reiniciar();
   camIniciada = false;
+  if (raiz.name === 'autoescola') {
+    const f = new Ferrovia(sim);
+    cena.add(f.grupo);
+    jogo.ferrovia = f;
+    // carros do trânsito esperam no PARE dos trilhos enquanto a passagem não estiver livre
+    if (jogo.trafego) jogo.trafego.passagemBloqueada = () => f.estado !== 'livre';
+  }
   aplicarQualidade(opcoes.valores);
 }
 
@@ -205,6 +236,7 @@ function reiniciarCarro(): void {
   jogo.sim.reposicionar();
   jogo.sim.reporObstaculos();
   jogo.trafego?.reiniciar();
+  jogo.ferrovia?.reiniciar();
   jogo.prova = new Prova(jogo.sim);
   jogo.examinador?.reiniciar(jogo.prova);
   jogo.relatorioMostrado = false;
@@ -219,6 +251,15 @@ async function mapaAutoescola(): Promise<THREE.Object3D> {
   tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
   const raiz = criarMapaAutoescola({ textura: tex });
   decorarAutoescola(raiz);
+  // Iluminação pública (antes de lerMapa: os postes viram sólidos). Fora do corredor do trem.
+  const ilum = criarIluminacaoPublica(FAIXAS, {
+    evitar: (x, z) => {
+      const xp = x / METROS_POR_PX + 800, yp = z / METROS_POR_PX + 758;
+      return AREAS_LIVRES_FERROVIA_PX.some((a) => xp > a.x0 - 30 && xp < a.x1 + 30 && yp > a.y0 - 30 && yp < a.y1 + 30);
+    },
+  });
+  ilum.name = 'iluminacao_publica';
+  raiz.add(ilum);
   return raiz;
 }
 
@@ -360,7 +401,7 @@ function quadro(agora: number): void {
   if (ent.bordas.has('reiniciar')) reiniciarCarro();
   if (ent.bordas.has('encerrar')) jogo.prova.encerrar();
 
-  const cabine = { seta: ent.seta, cinto: ent.cinto };
+  const cabine = { seta: ent.seta, cinto: ent.cinto, farol: ent.farol, alerta: ent.alerta };
   if (!calibracao.estaAberta && !opcoes.estaAberta) {
     acumulador += dt;
     let primeiro = true;
@@ -368,10 +409,16 @@ function quadro(agora: number): void {
       const cmd = comandosDe(ent, desligar && primeiro);
       primeiro = false;
       jogo.trafego?.passo(DT_FISICA);
+      jogo.ferrovia?.passo(DT_FISICA);
       jogo.sim.passo(cmd);
       const eventos = trem.eventos.splice(0);
       for (const ev of eventos) som.evento(ev);
-      const info = jogo.trafego?.info();
+      const info: InfoTrafego | undefined = jogo.trafego?.info() ?? (jogo.ferrovia ? { ...INFO_TRAFEGO_VAZIA, eventos: [] } : undefined);
+      if (info && jogo.ferrovia) {
+        info.passagemFechada = jogo.ferrovia.estado !== 'livre';
+        // bater no trem conta como colisão (interrompe a prova)
+        for (const _ of jogo.ferrovia.eventos()) info.eventos.push('colisao_carro');
+      }
       if (info?.eventos.includes('colisao_carro')) som.evento('batida', 0.8);
       jogo.prova.atualizar(DT_FISICA, cmd, cabine, eventos, info);
       acumulador -= DT_FISICA;
@@ -411,6 +458,20 @@ function quadro(agora: number): void {
   for (const o of jogo.prova.obstaculosTocados) for (const m of jogo.obstaculoMat.get(o) ?? []) m.emissive?.setHex(0x880000);
 
   jogo.trafego?.atualizarVisual(dt);
+  const ilum = jogo.mapa.raiz.getObjectByName('iluminacao_publica');
+  if (ilum) atualizarIluminacaoPublica(ilum as THREE.Group, jogo.visual.grupo.position, dt);
+  if (jogo.ferrovia) {
+    jogo.ferrovia.atualizarVisual(dt);
+    const pc = jogo.visual.grupo.position;
+    const et = jogo.ferrovia.estadoTrem();
+    const zTrem = Math.max(Math.min(pc.z, et.zTras), et.zFrente);
+    somFerrovia.atualizar(
+      jogo.ferrovia.sinoTocando,
+      jogo.ferrovia.buzinaTocando,
+      pc.distanceTo(jogo.ferrovia.cruzamento.centro),
+      Math.hypot(pc.x - et.x, pc.z - zTrem),
+    );
+  }
   ceu.atualizarSombra(jogo.visual.grupo.position);
   atualizarCamera(dt, ent.olhar, ent.olharTras);
   // Som
@@ -482,16 +543,18 @@ async function iniciar(): Promise<void> {
   const glb = params.get('mapa');
   try {
     if (glb) await carregarGLB(glb);
-    else carregarMapa(params.get('pista') === 'treino' ? criarMapaTeste() : await mapaAutoescola());
+    else carregarMapa(await mapaAutoescola());
   } catch (err) {
     console.error(err);
-    carregarMapa(criarMapaTeste());
+    app.textContent = `Erro ao carregar o mapa: ${err}`;
+    return;
   }
   requestAnimationFrame(quadro);
 
   const inicio = document.getElementById('inicio')!;
   const fecharInicio = () => {
     som.iniciar();
+    somFerrovia.iniciar();
     inicio.classList.add('oculto');
   };
   inicio.querySelector<HTMLButtonElement>('[data-acao="jogar"]')!.onclick = fecharInicio;
@@ -503,10 +566,7 @@ async function iniciar(): Promise<void> {
     calibracao.abrir();
   };
   inicio.querySelector<HTMLButtonElement>('[data-acao="opcoes"]')!.onclick = () => opcoes.abrir();
-  inicio.querySelector<HTMLButtonElement>('[data-acao="treino"]')!.onclick = () => {
-    fecharInicio();
-    carregarMapa(criarMapaTeste());
-  };
+
 }
 
 iniciar().catch((e) => {

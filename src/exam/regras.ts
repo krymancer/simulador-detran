@@ -39,6 +39,16 @@ export const LIMITE_PONTOS = 10;
 /** Tempo máximo para a baliza (s) — procedimento do DETRAN, não da resolução. */
 export const TEMPO_BALIZA = 5 * 60;
 
+/** Tempo máximo para a vaga a 90° e para a meia-volta (s) — escolha nossa. */
+export const TEMPO_VAGA_90 = 3 * 60;
+export const TEMPO_MEIA_VOLTA = 3 * 60;
+
+/** Prazo para cumprir uma instrução simples (acender farol, pisca-alerta), em s. */
+export const PRAZO_INSTRUCAO = 5;
+
+/** Parada junto ao meio-fio: distância máxima da lateral da carroceria até a guia (m). CTB art. 182, II. */
+export const AFASTAMENTO_MEIO_FIO = 0.5;
+
 /** Velocidade máxima da pista (placa R-19 de 30 km/h), em m/s. */
 export const VELOCIDADE_MAXIMA_KMH = 30;
 export const VELOCIDADE_MAXIMA = VELOCIDADE_MAXIMA_KMH / 3.6;
@@ -71,6 +81,8 @@ export const REGRAS = {
   // --- Gravíssimas (6 pt)
   avancou_vermelho: { descricao: 'Avançou o sinal vermelho do semáforo (CTB art. 208)', gravidade: 'gravissima' },
   nao_parou_pare: { descricao: 'Não parou na placa PARE (CTB art. 208)', gravidade: 'gravissima' },
+  nao_parou_linha_ferrea: { descricao: 'Não parou antes de transpor a linha férrea (CTB art. 212)', gravidade: 'gravissima' },
+  avancou_passagem_nivel: { descricao: 'Avançou a passagem de nível com o sinal/cancela fechando (CTB art. 210)', gravidade: 'gravissima' },
   subiu_calcada: { descricao: 'Subiu na calçada / meio-fio (CTB art. 193)', gravidade: 'gravissima' },
   preferencia_pedestre: {
     descricao: 'Não deu preferência ao pedestre na faixa (CTB art. 214, I)',
@@ -96,8 +108,12 @@ export const REGRAS = {
     gravidade: 'grave',
   },
   // Procedimento do DETRAN (sem natureza no CTB): pesos escolhidos aqui.
+  // Parar ou retomar a marcha sem a seta: o art. 196 cita "a realização da manobra de parar o
+  // veículo" e "o início da marcha" junto com a mudança de direção.
+  parou_sem_seta: { descricao: 'Parou junto ao meio-fio sem sinalizar com a seta (CTB art. 196)', gravidade: 'grave' },
   derrubou_baliza: { descricao: 'Derrubou baliza (procedimento do DETRAN)', gravidade: 'grave' },
   baliza_tempo: { descricao: 'Não completou a baliza no tempo (procedimento do DETRAN)', gravidade: 'grave' },
+  vaga_tempo: { descricao: 'Não estacionou na vaga a 90° no tempo (procedimento do DETRAN)', gravidade: 'grave' },
 
   // --- Médias (2 pt)
   // Excesso de velocidade: CTB art. 218 — até 20 % acima = média; 20–50 % = grave;
@@ -109,11 +125,24 @@ export const REGRAS = {
   tocou_baliza: { descricao: 'Tocou em baliza (procedimento do DETRAN)', gravidade: 'media' },
   tocou_cone: { descricao: 'Tocou em cone (procedimento do DETRAN)', gravidade: 'media' },
   recuou_rampa: { descricao: 'Deixou o veículo recuar na rampa', gravidade: 'media' },
+  // CTB art. 251, I: usar o pisca-alerta "exceto em imobilizações ou situações de emergência".
+  pisca_alerta_movimento: {
+    descricao: 'Usou o pisca-alerta com o veículo em movimento (CTB art. 251, I)',
+    gravidade: 'media',
+  },
+  // Procedimento do DETRAN (sem natureza no CTB): peso escolhido aqui.
+  vaga_fora: { descricao: 'Estacionou com o veículo fora da demarcação da vaga (procedimento do DETRAN)', gravidade: 'media' },
 
   // --- Leves (1 pt)
   // CTB art. 42 proíbe frear bruscamente sem razão de segurança; sem penalidade própria,
   // enquadramos em "dirigir sem atenção ou sem os cuidados indispensáveis" (art. 169, leve).
   freada_brusca: { descricao: 'Freou bruscamente sem necessidade (CTB art. 42 / art. 169)', gravidade: 'leve' },
+  // CTB art. 182 (PARAR): II — afastado da guia de 50 cm a 1 m: leve; III — a mais de 1 m: média.
+  // A gravidade é decidida na hora pelo examinador (ver examinador.ts).
+  parou_afastado_meio_fio: {
+    descricao: 'Parou afastado do meio-fio de 50 cm a 1 m (CTB art. 182, II)',
+    gravidade: 'leve',
+  },
   // Técnica de direção / uso dos equipamentos — sem natureza no CTB: leves por escolha nossa.
   motor_apagou: { descricao: 'Deixou o motor apagar', gravidade: 'leve' },
   freio_de_mao: { descricao: 'Movimentou o veículo com o freio de mão puxado', gravidade: 'leve' },

@@ -13,6 +13,7 @@ export interface Config {
   /** Controle/teclado: quão rápido o volante gira (0,5–2). */
   sensibilidade: number;
   qualidade: Qualidade;
+  horario: 'dia' | 'entardecer' | 'noite';
   /** Campo de visão no cockpit (graus). */
   fov: number;
   volume: number;
@@ -28,6 +29,7 @@ export const CONFIG_PADRAO: Config = {
   volante1para1: true,
   sensibilidade: 1,
   qualidade: 'alta',
+  horario: 'dia',
   fov: 68,
   volume: 0.8,
   vozExaminador: true,
@@ -78,6 +80,7 @@ const CAMPOS: { titulo: string; campos: Campo[] }[] = [
   {
     titulo: 'Imagem e som',
     campos: [
+      { k: 'horario', tipo: 'sel', rotulo: 'Horário', opcoes: [['dia', 'Dia'], ['entardecer', 'Entardecer'], ['noite', 'Noite']], dica: 'À noite, ligue o farol (L / ○ no G29).' },
       { k: 'qualidade', tipo: 'sel', rotulo: 'Qualidade gráfica', opcoes: [['alta', 'Alta'], ['media', 'Média'], ['baixa', 'Baixa (PC fraco)']], dica: 'Baixa: sem sombras, resolução menor e espelhos mais leves.' },
       { k: 'fov', tipo: 'num', rotulo: 'Campo de visão (cockpit)', min: 50, max: 90, passo: 1, unidade: '°' },
       { k: 'volume', tipo: 'num', rotulo: 'Volume', min: 0, max: 1, passo: 0.05 },

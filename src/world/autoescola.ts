@@ -23,6 +23,45 @@ export function px(x: number, y: number, alt = 0): THREE.Vector3 {
   return new THREE.Vector3((x - W / 2) * METROS_POR_PX, alt, (y - H / 2) * METROS_POR_PX);
 }
 
+// ---------------------------------------------------------------- relevo
+/**
+ * Rampa na reta da direita do anel (mão dupla): sobe ~0,9 m em 9 m (≈10% de
+ * média, 15% no meio), platô de 6 m e desce do outro lado. Fora dela, tudo plano.
+ * O perfil é em cosseno (sem quinas que batam o para-choque).
+ */
+export const RAMPA = {
+  yCentroPx: 700,
+  platoM: 3,       // meio comprimento do platô
+  rampaM: 9,       // comprimento de cada subida
+  alturaM: 0.9,
+  // faixa em X (px da planta) onde o relevo vale, com transição linear nas bordas
+  xIni: 1265, xCheio: 1355, xCheioFim: 1525, xFim: 1600,
+};
+
+/** Altura do terreno (m) no ponto (x, z) do mundo — 0 fora da rampa. */
+export function alturaTerreno(x: number, z: number): number {
+  const xp = x / METROS_POR_PX + W / 2;
+  let fx: number;
+  if (xp <= RAMPA.xIni || xp >= RAMPA.xFim) return 0;
+  if (xp < RAMPA.xCheio) fx = (xp - RAMPA.xIni) / (RAMPA.xCheio - RAMPA.xIni);
+  else if (xp <= RAMPA.xCheioFim) fx = 1;
+  else fx = (RAMPA.xFim - xp) / (RAMPA.xFim - RAMPA.xCheioFim);
+  const zc = (RAMPA.yCentroPx - H / 2) * METROS_POR_PX;
+  const d = Math.abs(z - zc);
+  if (d >= RAMPA.platoM + RAMPA.rampaM) return 0;
+  const fz = d <= RAMPA.platoM ? 1 : 0.5 * (1 + Math.cos((Math.PI * (d - RAMPA.platoM)) / RAMPA.rampaM));
+  return RAMPA.alturaM * fx * fz;
+}
+
+/** Linhas da grade (células) que ficam na rampa — ali a geometria é mais fina. */
+function linhaNaRampa(gy: number): boolean {
+  const meio = (RAMPA.platoM + RAMPA.rampaM) / METROS_POR_PX + C;
+  const ypx = (gy + 0.5) * C;
+  return Math.abs(ypx - RAMPA.yCentroPx) < meio;
+}
+/** Colunas onde a inclinação lateral muda (cortes dos retângulos). */
+const CORTES_X = [RAMPA.xIni, RAMPA.xCheio, RAMPA.xCheioFim, RAMPA.xFim].map((x) => Math.round(x / C));
+
 /** Grade de colisão: true = calçada/canteiro. */
 export function lerGrade(): boolean[][] {
   return grade.dados.map((linha: string) => {
@@ -39,16 +78,18 @@ function retangulos(g: boolean[][]): { x0: number; x1: number; y0: number; y1: n
   let abertos = new Map<string, { x0: number; x1: number; y0: number; y1: number }>();
   for (let y = 0; y < g.length; y++) {
     const runs: [number, number][] = [];
+    const rampa = linhaNaRampa(y);
     let x = 0;
     while (x < g[y].length) {
       if (!g[y][x]) { x++; continue; }
       const ini = x;
-      while (x < g[y].length && g[y][x]) x++;
+      while (x < g[y].length && g[y][x] && !(rampa && x > ini && CORTES_X.includes(x))) x++;
       runs.push([ini, x]);
     }
     const novos = new Map<string, { x0: number; x1: number; y0: number; y1: number }>();
     for (const [a, b] of runs) {
-      const k = `${a},${b}`;
+      // na rampa cada linha é um retângulo próprio (o relevo muda ao longo de Z)
+      const k = rampa ? `r${y},${a},${b}` : `${a},${b}`;
       const r = abertos.get(k);
       if (r) { r.y1 = y + 1; novos.set(k, r); abertos.delete(k); }
       else novos.set(k, { x0: a, x1: b, y0: y, y1: y + 1 });
@@ -76,7 +117,7 @@ function geometriaCalcadas(g: boolean[][]): THREE.BufferGeometry {
   const quad = (pts: number[][], n: number[], alvo: number[]) => {
     const b = pos.length / 3;
     for (const p of pts) {
-      pos.push(p[0], p[1], p[2]);
+      pos.push(p[0], p[1] + alturaTerreno(p[0], p[2]), p[2]);
       nor.push(n[0], n[1], n[2]);
       uv.push((p[0] - ox) / (W * METROS_POR_PX), 1 - (p[2] - oz) / (H * METROS_POR_PX));
     }
@@ -143,7 +184,14 @@ export function criarMapaAutoescola(op: OpcoesAutoescola = {}): THREE.Group {
   const matMeioFio = new THREE.MeshStandardMaterial({ color: 0xb8b3a8, roughness: 0.85 });
 
   // Asfalto: um plano com a planta inteira como textura.
-  const asfalto = new THREE.Mesh(new THREE.PlaneGeometry(largM, altM), matChao);
+  const geoAsfalto = new THREE.PlaneGeometry(largM, altM, Math.round(largM / 0.5), Math.round(altM / 0.5));
+  {
+    // o plano está em XY e é girado −90° em X: z do mundo = −y local; o relevo vai em z local
+    const pa = geoAsfalto.getAttribute('position');
+    for (let i = 0; i < pa.count; i++) pa.setZ(i, alturaTerreno(pa.getX(i), -pa.getY(i)));
+    geoAsfalto.computeVertexNormals();
+  }
+  const asfalto = new THREE.Mesh(geoAsfalto, matChao);
   asfalto.rotation.x = -Math.PI / 2;
   asfalto.name = 'COL_pista';
   asfalto.userData.visivel = true;
@@ -214,11 +262,53 @@ export function criarMapaAutoescola(op: OpcoesAutoescola = {}): THREE.Group {
   raiz.add(zonaPorCantos('FAIXA_PEDESTRE_2', [850, 22], [850, 175], 66));
   raiz.add(zonaPorCantos('FAIXA_PEDESTRE_3', [610, 215], [800, 215], 62));
 
-  // ---- Parada obrigatória (PARE): a área antes da linha de retenção.
-  // Saída da avenida diagonal (linha branca em y≈262), para quem sobe.
-  raiz.add(zonaPorCantos('ZONA_PARE_1', [735, 340], [705, 262], 170));
-  // Faixa de cima à direita, antes da faixa de pedestres (linha branca em x≈885), para quem vem da direita.
-  raiz.add(zonaPorCantos('ZONA_PARE_2', [960, 58], [886, 58], 76));
+  // ---- Cruzamento de cima com SEMÁFORO (fases: rua de cima × avenida).
+  // Linhas de retenção: caixas finas com +Z no sentido do trânsito.
+  raiz.add(zonaPorCantos('LINHA_PARADA_1', [729, 278], [723, 262], 178)); // avenida, subindo
+  raiz.add(zonaPorCantos('LINHA_PARADA_2', [902, 56], [886, 56], 74));    // faixa de cima à direita, indo para oeste
+  raiz.add(zonaPorCantos('LINHA_PARADA_3', [469, 137], [485, 137], 78));  // faixa interna à esquerda, indo para leste
+  const semaforos: { id: number; x: number; y: number; face: [number, number]; fase: 'rua' | 'avenida' }[] = [
+    { id: 1, x: 845, y: 270, face: [0.38, 0.92], fase: 'avenida' },
+    { id: 2, x: 895, y: -14, face: [1, 0], fase: 'rua' },
+    { id: 3, x: 470, y: 192, face: [-1, 0], fase: 'rua' },
+  ];
+  const matPoste = new THREE.MeshStandardMaterial({ color: 0x3a3d42, roughness: 0.6, metalness: 0.4 });
+  for (const sm of semaforos) {
+    let [x, y] = [sm.x, sm.y];
+    // empurra para a calçada se cair no asfalto
+    const gy = Math.floor(y / C), gx = Math.floor(x / C);
+    if (gy >= 0 && gy < g.length && !g[gy]?.[gx]) {
+      for (let r = 4; r < 60; r += 4) {
+        const ok = [[r, 0], [-r, 0], [0, r], [0, -r]].find(([dx, dy]) => g[Math.floor((y + dy) / C)]?.[Math.floor((x + dx) / C)]);
+        if (ok) { x += ok[0]; y += ok[1]; break; }
+      }
+    }
+    const poste = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.08, 3.3, 10), matPoste);
+    poste.name = `SEMAFORO_${sm.id}`;
+    const base = px(x, y, ALTURA_CALCADA);
+    poste.position.set(base.x, base.y + 1.65, base.z);
+    poste.rotation.y = Math.atan2(sm.face[0], sm.face[1]);
+    poste.castShadow = true;
+    // Ciclo de 35 s: rua verde 0–15, amarela 15–18, vermelho total 18–20; avenida verde 20–32, amarela 32–35.
+    poste.userData = sm.fase === 'rua'
+      ? { verde: 15, amarelo: 3, vermelho: 17, defasagem: 0 }
+      : { verde: 12, amarelo: 3, vermelho: 20, defasagem: 15 };
+    raiz.add(poste);
+  }
+
+  // ---- Parada obrigatória (PARE) na saída do estacionamento (sentido norte).
+  raiz.add(zonaPorCantos('ZONA_PARE_3', [1232, 1400], [1232, 1356], 625));
+
+  // ---- Passagem de nível (linha férrea em x ≈ 676): parada obrigatória antes dos trilhos (CTB art. 212).
+  // As zonas terminam ANTES das cancelas (que ficam a ±4,3 m da linha), não na pintura.
+  raiz.add(zonaPorCantos('ZONA_PARE_PN_1', [500, 1312], [574, 1312], 76)); // faixa de baixo, indo para leste
+  raiz.add(zonaPorCantos('ZONA_PARE_PN_2', [856, 1232], [782, 1232], 76)); // faixa de cima, indo para oeste
+
+  // ---- Rampa (reta da direita): zonas da subida em cada sentido.
+  const platoPx = RAMPA.platoM / METROS_POR_PX;
+  const rampaPx = RAMPA.rampaM / METROS_POR_PX;
+  raiz.add(zonaPorCantos('ZONA_RAMPA_1', [1440, RAMPA.yCentroPx + platoPx + rampaPx], [1440, RAMPA.yCentroPx + platoPx], 165)); // subindo para o norte
+  raiz.add(zonaPorCantos('ZONA_RAMPA_2', [1440, RAMPA.yCentroPx - platoPx - rampaPx], [1440, RAMPA.yCentroPx - platoPx], 165)); // subindo para o sul
 
   // ---- Spawn: estacionado numa vaga do estacionamento de baixo, de frente para a rua (norte = −Z).
   const spawn = new THREE.Object3D();

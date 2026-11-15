@@ -20,7 +20,6 @@ npm test         # testes de física e da prova (headless, Node)
 | `src/world/autoescola.ts` | Pista da autoescola, gerada da planta (`assets-fonte/mapa-autoescola.png`) por `node scripts/gerar-mapa.mjs`: textura do chão + grade de calçadas/meio-fio (15 cm). Baliza, faixas de pedestre, zonas de PARE e spawn ficam aqui. |
 | `src/world/autoescolaDecoracao.ts` | Placas (CTB), árvores e prédios da pista da autoescola. |
 | `src/world/placas.ts`, `src/world/ambiente.ts` | Placas de trânsito brasileiras e cenário (árvores, prédios, céu). |
-| `src/world/testMap.ts` | Pista de treino (rampa, semáforo), feita com as mesmas convenções de nome (serve de exemplo). |
 | `src/exam/regras.ts` | Tabela de faltas e pontos pela Resolução CONTRAN nº 1.020/2025 (leve 1, média 2, grave 4, gravíssima 6; aprovado com até 10 pontos; sem eliminatória). Faltas que não são infração do CTB têm peso escolhido por nós (marcado no arquivo). |
 | `src/exam/examinador.ts`, `src/exam/pista.ts` | Examinador com percurso (11 etapas, voz em português) e regras de faixa: contramão, linha divisória, conversão sem seta. |
 | `src/render/relatorio.ts` | Relatório no fim da prova: faltas, mapa com trajeto e histórico das tentativas. |

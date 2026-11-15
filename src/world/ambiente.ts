@@ -489,6 +489,8 @@ class Pintor {
   readonly rug: CanvasRenderingContext2D;
   readonly telaCor: HTMLCanvasElement;
   readonly telaRug: HTMLCanvasElement;
+  /** Retângulos de vidro pintados (x, y, w, h em px) — viram janelas acesas à noite. */
+  readonly vidros: [number, number, number, number][] = [];
   constructor(
     readonly w: number,
     readonly h: number,
@@ -534,6 +536,7 @@ function sujeira(ctx: CanvasRenderingContext2D, w: number, h: number, r: () => n
 }
 
 function vidro(p: Pintor, x: number, y: number, w: number, h: number, r: () => number): void {
+  p.vidros.push([x, y, w, h]);
   const g = p.cor.createLinearGradient(x, y, x + w * 0.3, y + h);
   const claro = r() < 0.5;
   g.addColorStop(0, claro ? '#a9bfcf' : '#7f97a8');
@@ -565,6 +568,105 @@ function vidro(p: Pintor, x: number, y: number, w: number, h: number, r: () => n
   p.cor.lineTo(x, y + h * 0.6);
   p.cor.closePath();
   p.cor.fill();
+}
+
+// ---------------------------------------------------------------------------
+// Luzes noturnas (janelas acesas, luminárias): registro global de materiais
+// ---------------------------------------------------------------------------
+
+/** Materiais cuja `emissiveIntensity` acompanha o horário: base × fator do grupo. */
+const noturnos: { mat: THREE.MeshStandardMaterial; base: number; grupo: 'janelas' | 'lampadas' }[] = [];
+const fatorNoturno = { janelas: 0, lampadas: 0 };
+const ouvintesNoturnos = new Set<(fatorLampadas: number) => void>();
+
+function registrarNoturno(mat: THREE.MeshStandardMaterial, base: number, grupo: 'janelas' | 'lampadas'): void {
+  noturnos.push({ mat, base, grupo });
+  mat.emissiveIntensity = base * fatorNoturno[grupo];
+}
+
+/**
+ * Liga/desliga (0..1) as janelas acesas dos prédios e as lâmpadas dos postes.
+ * `definirHorario` chama isto; só é preciso chamar à mão para efeitos especiais.
+ */
+export function definirLuzesNoturnas(janelas: number, lampadas: number): void {
+  fatorNoturno.janelas = janelas;
+  const mudouLamp = fatorNoturno.lampadas !== lampadas;
+  fatorNoturno.lampadas = lampadas;
+  for (const n of noturnos) n.mat.emissiveIntensity = n.base * fatorNoturno[n.grupo];
+  if (mudouLamp) for (const f of ouvintesNoturnos) f(lampadas);
+}
+
+/** Fator atual (0..1) das lâmpadas de rua. */
+export function fatorLampadas(): number {
+  return fatorNoturno.lampadas;
+}
+
+/** Recebe o fator das lâmpadas sempre que ele muda (ex.: iluminação pública). Devolve o cancelamento. */
+export function aoMudarLampadas(f: (fator: number) => void): () => void {
+  ouvintesNoturnos.add(f);
+  return () => ouvintesNoturnos.delete(f);
+}
+
+const CORES_LUZ_JANELA = ['#ffd49a', '#ffcc88', '#ffe2b8', '#fff1d6', '#d8e6ff', '#c4d8ff', '#ffbf7a'];
+
+/**
+ * Mapa emissivo das janelas: cada janela (agrupada por `celula`) acende com
+ * probabilidade `prob`, numa cor quente ou fria, mais clara no alto (luz do teto)
+ * e às vezes com cortina na frente. Preto = apagado.
+ */
+function mapaEmissao(
+  p: Pintor,
+  r: () => number,
+  prob: number,
+  celula: (x: number, y: number) => string,
+  cores: string[] = CORES_LUZ_JANELA,
+): THREE.CanvasTexture {
+  const { canvas, ctx } = novaTela(p.w, p.h);
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, p.w, p.h);
+  const estado = new Map<string, { cor: string; nivel: number; cortina: number } | null>();
+  for (const [x, y, w, h] of p.vidros) {
+    const k = celula(x + w / 2, y + h / 2);
+    let e = estado.get(k);
+    if (e === undefined) {
+      e = r() < prob ? { cor: cores[Math.floor(r() * cores.length)], nivel: entre(r, 0.55, 1), cortina: r() } : null;
+      estado.set(k, e);
+    }
+    if (!e) continue;
+    const g = ctx.createLinearGradient(0, y, 0, y + h);
+    g.addColorStop(0, e.cor);
+    g.addColorStop(1, 'rgba(0,0,0,1)');
+    ctx.globalAlpha = e.nivel;
+    ctx.fillStyle = e.cor;
+    ctx.fillRect(x, y, w, h);
+    ctx.globalAlpha = 0.45 * e.nivel;
+    ctx.fillStyle = g;
+    ctx.fillRect(x, y, w, h);
+    if (e.cortina < 0.35) {
+      // cortina meio fechada: luz filtrada, mais fraca
+      ctx.globalAlpha = 0.6;
+      ctx.fillStyle = '#000';
+      ctx.fillRect(x + w * (e.cortina < 0.17 ? 0 : 0.5), y, w * 0.5, h);
+    }
+    ctx.globalAlpha = 1;
+  }
+  return texturaDe(canvas);
+}
+
+/** Material de parede com janelas que acendem à noite. */
+function materialComJanelas(p: Pintor, emissao: THREE.CanvasTexture, base: number): THREE.MeshStandardMaterial {
+  const { map, roughnessMap } = p.texturas();
+  const m = new THREE.MeshStandardMaterial({
+    map,
+    roughnessMap,
+    roughness: 1,
+    metalness: 0,
+    emissive: 0xffffff,
+    emissiveMap: emissao,
+    emissiveIntensity: 0,
+  });
+  registrarNoturno(m, base, 'janelas');
+  return m;
 }
 
 type EstiloFachada = 'janelas' | 'varandas' | 'faixas';
@@ -657,8 +759,10 @@ function materialFachada(pi: number, estilo: EstiloFachada, var_: number): THREE
       }
     }
   }
-  const { map, roughnessMap } = p.texturas();
-  m = new THREE.MeshStandardMaterial({ map, roughnessMap, roughness: 1, metalness: 0 });
+  // à noite: ~40% dos apartamentos/salas acesos (um vão por andar = uma unidade)
+  const bay = (estilo === 'faixas' ? 1.5 * 2 : VAO) * pxm;
+  const emissao = mapaEmissao(p, r, 0.4, (x, y) => `${Math.floor(x / bay)},${Math.floor(y / (ANDAR * pxm))}`);
+  m = materialComJanelas(p, emissao, 1.1);
   cacheFachada.set(chave, m);
   return m;
 }
@@ -722,8 +826,9 @@ function materialTerreo(v: number): THREE.MeshStandardMaterial {
     // soleira / calçada encosta aqui
     p.ret(x0, H - 0.12 * pxm, LOJA * pxm, 0.12 * pxm, '#77736b', 0.9);
   }
-  const { map, roughnessMap } = p.texturas();
-  m = new THREE.MeshStandardMaterial({ map, roughnessMap, roughness: 1, metalness: 0 });
+  // lojas: vitrine acesa na maioria, luz branca de LED
+  const emissao = mapaEmissao(p, r, 0.75, (x) => `${Math.floor(x / (LOJA * pxm))}`, ['#fff6e6', '#f2f6ff', '#ffe9c4']);
+  m = materialComJanelas(p, emissao, 0.55);
   cacheTerreo.set(v, m);
   return m;
 }
@@ -770,8 +875,8 @@ function materialCasa(v: number): THREE.MeshStandardMaterial {
   p.cor.fillStyle = 'rgba(0,0,0,0.18)';
   for (let k = 0; k < 3; k++) p.cor.fillRect(dx + 6, dy + 8 + k * (dh / 3), dw - 12, dh / 3 - 16);
   p.ret(dx + dw - 12, dy + dh * 0.5, 5, 10, '#c9c4b8', 0.3);
-  const { map, roughnessMap } = p.texturas();
-  m = new THREE.MeshStandardMaterial({ map, roughnessMap, roughness: 1, metalness: 0 });
+  const emissao = mapaEmissao(p, r, 0.5, (x) => `${Math.floor(x / (4 * pxm))}`, ['#ffcf8f', '#ffc477', '#ffe0b0', '#cfdcff']);
+  m = materialComJanelas(p, emissao, 1.0);
   cacheCasa.set(v, m);
   return m;
 }
@@ -955,11 +1060,14 @@ export function criarPredio(largura: number, altura: number, profundidade: numbe
 let _poste: { geos: THREE.BufferGeometry[]; mats: THREE.Material[] } | null = null;
 const ALT_POSTE = 9;
 const R_POSTE_BASE = 0.13;
+/** Centro da lente da luminária, em coordenadas do grupo do poste. */
+export const CABECA_POSTE = new THREE.Vector3(0, ALT_POSTE + 0.28, 2.38);
 
 /**
  * Poste de concreto cônico com braço metálico e luminária LED. O braço
  * avança para +Z local (gire o grupo para apontar à pista).
- * `userData.lampada` é o material emissivo (aumente `emissiveIntensity` à noite).
+ * `userData.lampada` é o material emissivo (compartilhado; acende sozinho com
+ * `definirHorario('noite')` / `definirLuzesNoturnas`).
  */
 export function criarPosteIluminacao(): THREE.Group {
   if (!_poste) {
@@ -992,6 +1100,7 @@ export function criarPosteIluminacao(): THREE.Group {
     lente.rotateX(Math.PI / 2);
     lente.rotateX(-0.08);
     lente.translate(0, ALT_POSTE + 0.28, 2.38);
+    registrarNoturno(matLente, 6, 'lampadas');
     _poste = { geos: [fusteM, bracoM, corpo, lente], mats: [matConcreto, matMetal, matCorpoLum, matLente] };
   }
   const g = new THREE.Group();
@@ -1066,79 +1175,185 @@ export function criarCerca(comprimento: number): THREE.Group {
 // Céu, sol e névoa
 // ---------------------------------------------------------------------------
 
+export type Horario = 'dia' | 'entardecer' | 'noite';
+
 /**
  * O Sky (Preetham) foi calibrado para exposição ~0,5. Em vez de baixar a
  * exposição global (o que escureceria tudo o resto), escalamos a radiância do
  * próprio céu e usamos exposição 1 com intensidades de luz "normais".
+ *
+ * O shader também ganha um céu noturno (gradiente azul-marinho + halo da lua)
+ * misturado por `noite` (0..1), para a transição dia → noite ser contínua.
  */
 const ESCALA_CEU = 0.55;
 function escalarCeu(ceu: Sky): void {
   const m = ceu.material;
   m.uniforms.escalaCeu = { value: ESCALA_CEU };
+  m.uniforms.noite = { value: 0 };
+  m.uniforms.corZeniteNoite = { value: new THREE.Color(0x01030a) };
+  m.uniforms.corHorizonteNoite = { value: new THREE.Color(0x111a30) };
+  m.uniforms.direcaoLua = { value: new THREE.Vector3(0, 1, 0) };
   m.fragmentShader =
-    'uniform float escalaCeu;\n' +
-    m.fragmentShader.replace('gl_FragColor = vec4( texColor, 1.0 );', 'gl_FragColor = vec4( texColor * escalaCeu, 1.0 );');
+    'uniform float escalaCeu;\nuniform float noite;\nuniform vec3 corZeniteNoite;\nuniform vec3 corHorizonteNoite;\nuniform vec3 direcaoLua;\n' +
+    m.fragmentShader.replace(
+      'gl_FragColor = vec4( texColor, 1.0 );',
+      `vec3 corNoite = mix( corHorizonteNoite, corZeniteNoite, pow( clamp( direction.y, 0.0, 1.0 ), 0.5 ) );
+      float dl = max( dot( direction, direcaoLua ), 0.0 );
+      corNoite += vec3( 0.55, 0.62, 0.8 ) * ( pow( dl, 600.0 ) * 0.06 + pow( dl, 40.0 ) * 0.012 );
+      gl_FragColor = vec4( mix( texColor * escalaCeu, corNoite, noite ), 1.0 );`,
+    );
 }
 
-const ELEVACAO_SOL = 36; // graus — tarde agradável
-const AZIMUTE_SOL = 215; // graus a partir de +Z, sentido anti-horário visto de cima
+/** Direção (unitária, apontando PARA a fonte) a partir de elevação e azimute em graus. */
+function direcaoDe(elevacao: number, azimute: number): THREE.Vector3 {
+  const el = THREE.MathUtils.degToRad(elevacao);
+  const az = THREE.MathUtils.degToRad(azimute);
+  return new THREE.Vector3(Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el)).normalize();
+}
+
 const LADO_SOMBRA = 40; // meia largura da caixa de sombra (80 m)
+const DURACAO_TRANSICAO = 1.2; // s
 
-/**
- * Configura céu físico (Preetham, com nuvens procedurais do próprio shader),
- * sol direcional com sombra que acompanha `alvo`, luz hemisférica de
- * preenchimento, mapa de ambiente (PMREM do céu), névoa com a cor do
- * horizonte e tone mapping ACES + saída sRGB no renderer.
- */
-export function configurarCeu(
-  cena: THREE.Scene,
-  renderer: THREE.WebGLRenderer,
-): { sol: THREE.DirectionalLight; atualizarSombra(alvo: THREE.Vector3): void } {
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.0;
-  renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFShadowMap;
+/** Tudo o que muda com o horário (interpolável). */
+interface EstadoCeu {
+  /** Direção da luz direcional (sol ou lua). */
+  luz: THREE.Vector3;
+  /** Posição do sol no shader do céu (à noite, abaixo do horizonte). */
+  solCeu: THREE.Vector3;
+  corLuz: THREE.Color;
+  intLuz: number;
+  hemiCeu: THREE.Color;
+  hemiChao: THREE.Color;
+  intHemi: number;
+  nevoa: THREE.Color;
+  nevoaPerto: number;
+  nevoaLonge: number;
+  exposicao: number;
+  escalaCeu: number;
+  turbidez: number;
+  rayleigh: number;
+  mie: number;
+  mieG: number;
+  nuvens: number;
+  ambiente: number; // multiplica environmentIntensity
+  noite: number; // céu noturno, estrelas e lua
+  janelas: number;
+  lampadas: number;
+  raioSombra: number;
+}
 
-  const el = THREE.MathUtils.degToRad(ELEVACAO_SOL);
-  const az = THREE.MathUtils.degToRad(AZIMUTE_SOL);
-  const dirSol = new THREE.Vector3(Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el)).normalize();
+function clonarEstado(e: EstadoCeu): EstadoCeu {
+  return {
+    ...e,
+    luz: e.luz.clone(),
+    solCeu: e.solCeu.clone(),
+    corLuz: e.corLuz.clone(),
+    hemiCeu: e.hemiCeu.clone(),
+    hemiChao: e.hemiChao.clone(),
+    nevoa: e.nevoa.clone(),
+  };
+}
 
-  const ceu = new Sky();
-  ceu.name = 'ceu';
-  escalarCeu(ceu);
-  ceu.scale.setScalar(4000);
-  ceu.frustumCulled = false;
-  const u = ceu.material.uniforms;
-  u.turbidity.value = 2.4;
-  u.rayleigh.value = 1.8;
-  u.mieCoefficient.value = 0.004;
-  u.mieDirectionalG.value = 0.82;
-  u.sunPosition.value.copy(dirSol);
-  u.cloudCoverage.value = 0.38;
-  u.cloudDensity.value = 0.5;
-  u.cloudElevation.value = 0.55;
-  u.cloudScale.value = 0.00022;
-  u.time.value = 37;
-  ceu.renderOrder = -1000;
+function misturarEstado(a: EstadoCeu, b: EstadoCeu, t: number, out: EstadoCeu): void {
+  const l = (x: number, y: number) => x + (y - x) * t;
+  out.luz.lerpVectors(a.luz, b.luz, t).normalize();
+  out.solCeu.lerpVectors(a.solCeu, b.solCeu, t).normalize();
+  out.corLuz.lerpColors(a.corLuz, b.corLuz, t);
+  out.hemiCeu.lerpColors(a.hemiCeu, b.hemiCeu, t);
+  out.hemiChao.lerpColors(a.hemiChao, b.hemiChao, t);
+  out.nevoa.lerpColors(a.nevoa, b.nevoa, t);
+  for (const k of [
+    'intLuz', 'intHemi', 'nevoaPerto', 'nevoaLonge', 'exposicao', 'escalaCeu', 'turbidez', 'rayleigh',
+    'mie', 'mieG', 'nuvens', 'ambiente', 'noite', 'janelas', 'lampadas', 'raioSombra',
+  ] as const) out[k] = l(a[k], b[k]);
+}
 
-  // --- mapa de ambiente + cor do horizonte, a partir do céu sem disco solar ---
-  const cenaCeu = new THREE.Scene();
-  const ceuEnv = new Sky();
-  ceuEnv.scale.setScalar(4000);
-  escalarCeu(ceuEnv);
-  ceuEnv.material.uniforms = THREE.UniformsUtils.clone(u);
-  ceuEnv.material.uniforms.showSunDisc.value = 0;
-  cenaCeu.add(ceuEnv);
-  // chão neutro no mapa de ambiente: sem ele o hemisfério de baixo também é
-  // "céu azul" e as sombras ficam azul-marinho
-  const chaoEnv = new THREE.Mesh(
-    new THREE.CircleGeometry(3000, 32).rotateX(-Math.PI / 2),
-    new THREE.MeshBasicMaterial({ color: new THREE.Color().setRGB(0.32, 0.29, 0.25, THREE.LinearSRGBColorSpace), fog: false }),
-  );
-  chaoEnv.position.y = -2;
+function aplicarUniformesCeu(u: Record<string, THREE.IUniform>, e: EstadoCeu): void {
+  u.sunPosition.value.copy(e.solCeu);
+  u.turbidity.value = e.turbidez;
+  u.rayleigh.value = e.rayleigh;
+  u.mieCoefficient.value = e.mie;
+  u.mieDirectionalG.value = e.mieG;
+  u.cloudCoverage.value = e.nuvens;
+  u.escalaCeu.value = e.escalaCeu;
+  u.noite.value = e.noite;
+  u.direcaoLua.value.copy(e.luz);
+}
 
-  let corNevoa = new THREE.Color(0xbcd0e0);
+/** Lua: disco com mares escuros e um halo suave (textura de canvas). */
+function texturaLua(): THREE.CanvasTexture {
+  const N = 256;
+  const { canvas, ctx } = novaTela(N, N);
+  const c = N / 2;
+  const halo = ctx.createRadialGradient(c, c, N * 0.1, c, c, N * 0.5);
+  halo.addColorStop(0, 'rgba(200,215,255,0.35)');
+  halo.addColorStop(0.4, 'rgba(160,180,230,0.08)');
+  halo.addColorStop(1, 'rgba(140,160,220,0)');
+  ctx.fillStyle = halo;
+  ctx.fillRect(0, 0, N, N);
+  const R = N * 0.13;
+  const disco = ctx.createRadialGradient(c - R * 0.3, c - R * 0.3, R * 0.1, c, c, R);
+  disco.addColorStop(0, '#fbfbf4');
+  disco.addColorStop(1, '#d9dccf');
+  ctx.fillStyle = disco;
+  ctx.beginPath();
+  ctx.arc(c, c, R, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.save();
+  ctx.clip();
+  const r = rng(91);
+  for (let i = 0; i < 14; i++) {
+    ctx.fillStyle = `rgba(120,125,130,${entre(r, 0.12, 0.3)})`;
+    ctx.beginPath();
+    ctx.arc(c + entre(r, -R, R) * 0.8, c + entre(r, -R, R) * 0.8, entre(r, R * 0.08, R * 0.32), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+  return texturaDe(canvas);
+}
+
+/** Campo de estrelas (um único draw call) numa esfera de raio `raio`, só acima do horizonte. */
+function criarEstrelas(raio: number): THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial> {
+  const r = rng(4242);
+  const N = 1400;
+  const pos: number[] = [];
+  const cor: number[] = [];
+  const v = new THREE.Vector3();
+  while (pos.length < N * 3) {
+    v.set(r() * 2 - 1, r() * 2 - 1, r() * 2 - 1);
+    const l = v.length();
+    if (l > 1 || l < 0.1) continue;
+    v.divideScalar(l);
+    if (v.y < 0.06) continue;
+    pos.push(v.x * raio, v.y * raio, v.z * raio);
+    // magnitude: poucas brilhantes, muitas fracas; leve tom azul/amarelo; somem perto do horizonte (bruma da cidade)
+    const b = Math.pow(r(), 3.2) * 0.9 + 0.12;
+    const h = THREE.MathUtils.smoothstep(v.y, 0.06, 0.35);
+    const t = r();
+    const k = b * h;
+    cor.push(k * (t < 0.2 ? 1 : 0.85), k * 0.9, k * (t > 0.8 ? 0.7 : 1));
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(cor, 3));
+  const m = new THREE.PointsMaterial({
+    size: 1.8,
+    sizeAttenuation: false,
+    vertexColors: true,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    fog: false,
+    blending: THREE.AdditiveBlending,
+  });
+  const p = new THREE.Points(g, m);
+  p.frustumCulled = false;
+  p.name = 'estrelas';
+  return p;
+}
+
+/** Média da cor do horizonte de um céu (para a névoa casar com o fundo). */
+function corDoHorizonte(renderer: THREE.WebGLRenderer, cenaCeu: THREE.Scene, padrao: THREE.Color): THREE.Color {
   try {
     const rt = new THREE.WebGLCubeRenderTarget(16, { type: THREE.FloatType });
     const cubo = new THREE.CubeCamera(0.1, 10000, rt);
@@ -1160,28 +1375,173 @@ export function configurarCeu(
     rt.dispose();
     if (n > 8) {
       soma.divideScalar(n);
-      corNevoa = new THREE.Color().setRGB(soma.x, soma.y, soma.z, THREE.LinearSRGBColorSpace);
+      return new THREE.Color().setRGB(soma.x, soma.y, soma.z, THREE.LinearSRGBColorSpace);
     }
   } catch {
     /* mantém a cor padrão */
   }
+  return padrao.clone();
+}
+
+export interface Ceu {
+  /** Luz direcional principal: o sol de dia, a lua à noite (sempre a mesma luz, com sombra). */
+  sol: THREE.DirectionalLight;
+  /** Chame a cada quadro: move a caixa de sombra (e o céu noturno) com `alvo` e avança a transição de horário. */
+  atualizarSombra(alvo: THREE.Vector3): void;
+  /** Troca o horário. Com `suave` (padrão), mistura em ~1 s (avança em `atualizarSombra`). */
+  definirHorario(h: Horario, suave?: boolean): void;
+  readonly horario: Horario;
+}
+
+/**
+ * Configura céu físico (Preetham, com nuvens procedurais do próprio shader),
+ * sol direcional com sombra que acompanha `alvo`, luz hemisférica de
+ * preenchimento, mapa de ambiente (PMREM do céu), névoa com a cor do
+ * horizonte e tone mapping ACES + saída sRGB no renderer. Começa de dia.
+ */
+export function configurarCeu(cena: THREE.Scene, renderer: THREE.WebGLRenderer): Ceu {
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.0;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
+
+  // ---- estados de cada horário (a névoa de dia/entardecer vem do próprio céu, abaixo)
+  const ESTADOS: Record<Horario, EstadoCeu> = {
+    dia: {
+      luz: direcaoDe(36, 215), // tarde agradável
+      solCeu: direcaoDe(36, 215),
+      corLuz: new THREE.Color(0xffeedd),
+      intLuz: 3.0,
+      hemiCeu: new THREE.Color(0xe6eef7),
+      hemiChao: new THREE.Color(0x8c7a5c),
+      intHemi: 1.7,
+      nevoa: new THREE.Color(0xbcd0e0),
+      nevoaPerto: 90,
+      nevoaLonge: 480,
+      exposicao: 1.0,
+      escalaCeu: ESCALA_CEU,
+      turbidez: 2.4,
+      rayleigh: 1.8,
+      mie: 0.004,
+      mieG: 0.82,
+      nuvens: 0.38,
+      ambiente: 1,
+      noite: 0,
+      janelas: 0,
+      lampadas: 0,
+      raioSombra: 2.5,
+    },
+    entardecer: {
+      // hora dourada: sol baixo a oeste-sudoeste, sombras compridas
+      luz: direcaoDe(12, 250),
+      solCeu: direcaoDe(2.5, 250),
+      corLuz: new THREE.Color(0xffa260),
+      intLuz: 3.0,
+      hemiCeu: new THREE.Color(0xb8b4d0),
+      hemiChao: new THREE.Color(0x7a5c44),
+      intHemi: 1.3,
+      nevoa: new THREE.Color(0xd9a07a),
+      nevoaPerto: 70,
+      nevoaLonge: 420,
+      exposicao: 1.08,
+      escalaCeu: 0.62,
+      turbidez: 9,
+      rayleigh: 3.2,
+      mie: 0.009,
+      mieG: 0.9,
+      nuvens: 0.42,
+      ambiente: 0.7,
+      noite: 0,
+      janelas: 0.35,
+      lampadas: 0,
+      raioSombra: 3,
+    },
+    noite: {
+      // luar: azulado, fraco, ainda com sombra macia
+      luz: direcaoDe(42, 135),
+      solCeu: direcaoDe(-12, 260),
+      corLuz: new THREE.Color(0x9db4ff),
+      intLuz: 0.32,
+      hemiCeu: new THREE.Color(0x3b4f80),
+      hemiChao: new THREE.Color(0x1a1714),
+      intHemi: 0.28,
+      nevoa: new THREE.Color(0x0e1424),
+      nevoaPerto: 40,
+      nevoaLonge: 340,
+      exposicao: 1.15,
+      escalaCeu: ESCALA_CEU,
+      turbidez: 2.4,
+      rayleigh: 1.8,
+      mie: 0.004,
+      mieG: 0.82,
+      nuvens: 0.25,
+      ambiente: 0.12,
+      noite: 1,
+      janelas: 1,
+      lampadas: 1,
+      raioSombra: 5,
+    },
+  };
+
+  const ceu = new Sky();
+  ceu.name = 'ceu';
+  escalarCeu(ceu);
+  ceu.scale.setScalar(4000);
+  ceu.frustumCulled = false;
+  const u = ceu.material.uniforms;
+  u.cloudDensity.value = 0.5;
+  u.cloudElevation.value = 0.55;
+  u.cloudScale.value = 0.00022;
+  u.time.value = 37;
+  ceu.renderOrder = -1000;
+  aplicarUniformesCeu(u, ESTADOS.dia);
+
+  // --- mapa de ambiente + cor do horizonte, a partir do céu sem disco solar ---
+  const cenaCeu = new THREE.Scene();
+  const ceuEnv = new Sky();
+  ceuEnv.scale.setScalar(4000);
+  escalarCeu(ceuEnv);
+  ceuEnv.material.uniforms = THREE.UniformsUtils.clone(u);
+  ceuEnv.material.uniforms.showSunDisc.value = 0;
+  cenaCeu.add(ceuEnv);
+  // chão neutro no mapa de ambiente: sem ele o hemisfério de baixo também é
+  // "céu azul" e as sombras ficam azul-marinho
+  const chaoEnv = new THREE.Mesh(
+    new THREE.CircleGeometry(3000, 32).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: new THREE.Color().setRGB(0.32, 0.29, 0.25, THREE.LinearSRGBColorSpace), fog: false }),
+  );
+  chaoEnv.position.y = -2;
+
+  ESTADOS.dia.nevoa = corDoHorizonte(renderer, cenaCeu, ESTADOS.dia.nevoa);
+  aplicarUniformesCeu(ceuEnv.material.uniforms, ESTADOS.entardecer);
+  // no entardecer a média do horizonte inclui o lado do sol: puxa um pouco para o lilás do lado oposto
+  ESTADOS.entardecer.nevoa = corDoHorizonte(renderer, cenaCeu, ESTADOS.entardecer.nevoa).lerp(new THREE.Color(0x8a7f9a), 0.25);
+  aplicarUniformesCeu(ceuEnv.material.uniforms, ESTADOS.dia);
 
   cenaCeu.add(chaoEnv);
-  if (!cena.environment) {
+  // mapas de ambiente por horário (só se a cena ainda não tiver um próprio); o do entardecer é gerado na 1ª vez
+  const envs: Partial<Record<Horario, THREE.Texture>> = {};
+  const temEnvProprio = !!cena.environment;
+  const gerarEnv = (h: Horario): THREE.Texture => {
+    aplicarUniformesCeu(ceuEnv.material.uniforms, ESTADOS[h]);
     const pmrem = new THREE.PMREMGenerator(renderer);
     const env = pmrem.fromScene(cenaCeu, 0, 0.1, 10000);
-    cena.environment = env.texture;
-    cena.environmentIntensity = 0.12;
     pmrem.dispose();
+    return env.texture;
+  };
+  if (!temEnvProprio) {
+    envs.dia = gerarEnv('dia');
+    envs.noite = envs.dia; // à noite só escurece
+    cena.environment = envs.dia;
+    cena.environmentIntensity = 0.12;
   }
-  ceuEnv.geometry.dispose();
-  ceuEnv.material.dispose();
-  chaoEnv.geometry.dispose();
-  chaoEnv.material.dispose();
+  const intAmbienteBase = cena.environmentIntensity;
 
   cena.background = null;
   cena.add(ceu);
-  cena.fog = new THREE.Fog(corNevoa, 90, 480);
+  cena.fog = new THREE.Fog(ESTADOS.dia.nevoa.clone(), 90, 480);
+  const nevoa = cena.fog as THREE.Fog;
 
   const hemi = new THREE.HemisphereLight(0xe6eef7, 0x8c7a5c, 1.7);
   hemi.name = 'luzHemisferica';
@@ -1197,7 +1557,7 @@ export function configurarCeu(
   sc.top = LADO_SOMBRA;
   sc.bottom = -LADO_SOMBRA;
   sc.near = 1;
-  sc.far = 260;
+  sc.far = 300;
   sc.updateProjectionMatrix();
   sol.shadow.bias = -0.0004;
   sol.shadow.normalBias = 0.03;
@@ -1205,23 +1565,121 @@ export function configurarCeu(
   cena.add(sol);
   cena.add(sol.target);
 
+  // ---- céu noturno: estrelas + lua (acompanham o alvo, ficam "no infinito")
+  const RAIO_NOITE = 600; // < camera.far
+  const noturno = new THREE.Group();
+  noturno.name = 'ceuNoturno';
+  const estrelas = criarEstrelas(RAIO_NOITE);
+  const matLua = new THREE.SpriteMaterial({
+    map: texturaLua(),
+    color: new THREE.Color(1.5, 1.5, 1.6),
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    fog: false,
+  });
+  const lua = new THREE.Sprite(matLua);
+  lua.name = 'lua';
+  lua.scale.setScalar(RAIO_NOITE * 0.14);
+  lua.renderOrder = -998;
+  estrelas.renderOrder = -999;
+  noturno.add(estrelas, lua);
+  noturno.visible = false;
+  cena.add(noturno);
+
+  // ---- estado atual + transição
+  let horario: Horario = 'dia';
+  const atual = clonarEstado(ESTADOS.dia);
+  let origem = clonarEstado(ESTADOS.dia);
+  let destino = ESTADOS.dia;
+  let progresso = 1;
+  let ultimo = -1;
+  let horarioOrigem: Horario = 'dia';
+
+  function aplicar(e: EstadoCeu): void {
+    aplicarUniformesCeu(u, e);
+    sol.color.copy(e.corLuz);
+    sol.intensity = e.intLuz;
+    sol.shadow.radius = e.raioSombra;
+    hemi.color.copy(e.hemiCeu);
+    hemi.groundColor.copy(e.hemiChao);
+    hemi.intensity = e.intHemi;
+    nevoa.color.copy(e.nevoa);
+    nevoa.near = e.nevoaPerto;
+    nevoa.far = e.nevoaLonge;
+    renderer.toneMappingExposure = e.exposicao;
+    cena.environmentIntensity = intAmbienteBase * e.ambiente;
+    if (!temEnvProprio) {
+      // troca o mapa de ambiente na metade da transição
+      const h = progresso >= 0.5 ? horario : horarioOrigem;
+      const env = envs[h] ?? (envs[h] = gerarEnv(h));
+      if (cena.environment !== env) cena.environment = env;
+    }
+    noturno.visible = e.noite > 0.01;
+    estrelas.material.opacity = e.noite;
+    matLua.opacity = e.noite;
+    lua.position.copy(e.luz).multiplyScalar(RAIO_NOITE * 0.92);
+    definirLuzesNoturnas(e.janelas, e.lampadas);
+  }
+
   // base do espaço da luz, para "grudar" a caixa de sombra na grade de texels (sem tremulação)
-  const frente = dirSol.clone().negate();
-  const direita = new THREE.Vector3().crossVectors(frente, new THREE.Vector3(0, 1, 0)).normalize();
-  const cima = new THREE.Vector3().crossVectors(direita, frente).normalize();
-  const texel = (2 * LADO_SOMBRA) / 2048;
+  const frente = new THREE.Vector3();
+  const direita = new THREE.Vector3();
+  const cima = new THREE.Vector3();
   const p = new THREE.Vector3();
+  const Y = new THREE.Vector3(0, 1, 0);
 
   function atualizarSombra(alvo: THREE.Vector3): void {
+    if (progresso < 1) {
+      const agora = performance.now() / 1000;
+      const dt = ultimo < 0 ? 1 / 60 : Math.min(0.1, agora - ultimo);
+      ultimo = agora;
+      progresso = Math.min(1, progresso + dt / DURACAO_TRANSICAO);
+      const t = progresso * progresso * (3 - 2 * progresso);
+      misturarEstado(origem, destino, t, atual);
+      aplicar(atual);
+    }
+    noturno.position.copy(alvo);
+
+    const dir = atual.luz;
+    frente.copy(dir).negate();
+    direita.crossVectors(frente, Y).normalize();
+    cima.crossVectors(direita, frente).normalize();
+    const texel = (2 * LADO_SOMBRA) / (sol.shadow.mapSize.x || 2048);
     const a = Math.round(alvo.dot(direita) / texel) * texel;
     const b = Math.round(alvo.dot(cima) / texel) * texel;
     const c = alvo.dot(frente);
     p.copy(direita).multiplyScalar(a).addScaledVector(cima, b).addScaledVector(frente, c);
     sol.target.position.copy(p);
-    sol.position.copy(p).addScaledVector(dirSol, 120);
+    sol.position.copy(p).addScaledVector(dir, 150);
     sol.target.updateMatrixWorld();
   }
+
+  function definirHorario(h: Horario, suave = true): void {
+    if (h === horario && progresso >= 1) return;
+    origem = clonarEstado(atual);
+    horarioOrigem = horario;
+    horario = h;
+    destino = ESTADOS[h];
+    if (suave) {
+      progresso = 0;
+      ultimo = -1;
+    } else {
+      progresso = 1;
+      misturarEstado(origem, destino, 1, atual);
+      aplicar(atual);
+    }
+  }
+
+  aplicar(atual);
   atualizarSombra(new THREE.Vector3());
 
-  return { sol, atualizarSombra };
+  return {
+    sol,
+    atualizarSombra,
+    definirHorario,
+    get horario() {
+      return horario;
+    },
+  };
 }

@@ -3,7 +3,8 @@ import * as THREE from 'three';
 import type { Simulacao } from '../sim/simulation';
 import type { InfoTrafego } from './infoTrafego';
 import type { Zona } from './parser';
-import { ALTURA_CALCADA, lerGrade, METROS_POR_PX, px } from './autoescola';
+import { ALTURA_CALCADA, alturaTerreno, lerGrade, METROS_POR_PX, px } from './autoescola';
+import { corSemaforo } from '../exam/exam';
 import grade from './autoescola/grade.json';
 import { faixaPorId } from './vias';
 
@@ -140,7 +141,7 @@ function elevado(x: number, z: number): boolean {
 
 /** Altura do chão (asfalto 0, calçada 0,15). */
 function alturaChao(x: number, z: number): number {
-  return elevado(x, z) ? ALTURA_CALCADA : 0;
+  return (elevado(x, z) ? ALTURA_CALCADA : 0) + alturaTerreno(x, z);
 }
 
 // ---------------------------------------------------------------- construção das rotas
@@ -310,7 +311,7 @@ function conector(p0: P2, d0: { x: number; z: number }, p3: P2, d3: { x: number;
 
 interface ZonaTrafego {
   zona: Zona;
-  tipo: 'faixa' | 'pare';
+  tipo: 'faixa' | 'pare' | 'semaforo';
   cx: number;
   cz: number;
   /** Eixo local X (largura) e Z (comprimento) no mundo. */
@@ -320,7 +321,7 @@ interface ZonaTrafego {
   hz: number;
 }
 
-function prepararZona(z: Zona, tipo: 'faixa' | 'pare'): ZonaTrafego {
+function prepararZona(z: Zona, tipo: 'faixa' | 'pare' | 'semaforo'): ZonaTrafego {
   const m = z.inversa.clone().invert();
   const c = new THREE.Vector3().addVectors(z.min, z.max).multiplyScalar(0.5).applyMatrix4(m);
   const e = m.elements;
@@ -341,7 +342,7 @@ function localZona(zt: ZonaTrafego, x: number, z: number, out: { x: number; z: n
 }
 
 interface Intervalo {
-  tipo: 'faixa' | 'pare';
+  tipo: 'faixa' | 'pare' | 'semaforo';
   zona: number;
   sIni: number;
   sFim: number;
@@ -412,7 +413,8 @@ function montarRota(id: string, pts: P2[], zonas: ZonaTrafego[]): Rota {
         dentro[i] = Math.abs(tmp.x) <= zt.hx + 0.2 && Math.abs(tmp.z) <= zt.hz ? 1 : 0;
       } else {
         const sentido = rota.dx[i] * zt.azx + rota.dz[i] * zt.azz;
-        dentro[i] = Math.abs(tmp.x) <= zt.hx + 1.0 && Math.abs(tmp.z) <= zt.hz && sentido > 0.5 ? 1 : 0;
+        // linhas de retenção são finas: garante ao menos uma amostra (H = 0,5 m) dentro
+        dentro[i] = Math.abs(tmp.x) <= zt.hx + 1.0 && Math.abs(tmp.z) <= Math.max(zt.hz, 0.3) && sentido > 0.5 ? 1 : 0;
       }
     }
     // começa a varrer de um ponto fora
@@ -548,6 +550,8 @@ interface CarroIA {
   x: number;
   z: number;
   yaw: number;
+  /** Inclinação (rad, + = nariz para cima) na rampa. */
+  arfagem: number;
   /** Frente (unitária). */
   fx: number;
   fz: number;
@@ -601,6 +605,8 @@ interface Pedestre {
 
 const _q = new THREE.Quaternion();
 const _eixoY = new THREE.Vector3(0, 1, 0);
+const _eixoX = new THREE.Vector3(1, 0, 0);
+const _qArf = new THREE.Quaternion();
 const _loc = { x: 0, z: 0 };
 
 // ---------------------------------------------------------------- classe
@@ -637,6 +643,9 @@ export class Trafego {
   private _lat = 0;
   private _k = 0;
 
+  /** Passagem de nível fechada (trem vindo): quem está no PARE dos trilhos espera. */
+  passagemBloqueada: () => boolean = () => false;
+
   constructor(sim: Simulacao, opcoes: OpcoesTrafego = {}) {
     this.sim = sim;
     this.visuais = opcoes.visuais ?? true;
@@ -649,6 +658,7 @@ export class Trafego {
     for (const z of sim.mapa.zonas) {
       if (z.tipo === 'faixa_pedestre') this.zonas.push(prepararZona(z, 'faixa'));
       else if (z.tipo === 'pare') this.zonas.push(prepararZona(z, 'pare'));
+      else if (z.tipo === 'linha_parada') this.zonas.push(prepararZona(z, 'semaforo'));
     }
     this.ocupada = new Uint8Array(this.zonas.length);
     for (const id of ['anel_externo', 'anel_interno', 'diagonal_1', 'diagonal_2', 'diagonal_3']) {
@@ -694,7 +704,7 @@ export class Trafego {
         vMax: V_MAX * (0.82 + 0.18 * this.sorteio()),
         acel: 1.6 + 0.6 * this.sorteio(),
         x: 0, z: 0, yaw: 0, fx: 0, fz: 1,
-        freando: false, pareCumprido: -1, parado: 0, contato: false, giroRodas: 0,
+        freando: false, arfagem: 0, pareCumprido: -1, parado: 0, contato: false, giroRodas: 0,
         corpo, inicial: { rota, s },
       };
       if (this.visuais) {
@@ -785,8 +795,8 @@ export class Trafego {
     for (const c of this.carros) {
       const v = c.visual;
       if (!v) continue;
-      v.raiz.position.set(c.x, 0, c.z);
-      v.raiz.rotation.y = c.yaw;
+      v.raiz.position.set(c.x, alturaTerreno(c.x, c.z), c.z);
+      v.raiz.rotation.set(-c.arfagem, c.yaw, 0, 'YXZ');
       for (const r of v.rodas) r.rotation.x = c.giroRodas;
       v.freio.emissiveIntensity = c.freando ? 2.6 : 0.35;
       const seta = pisca ? c.rota.seta[Math.floor(c.s / H) % c.rota.n] : 0;
@@ -830,7 +840,7 @@ export class Trafego {
     while (this.infoCarros.length < this.carros.length) this.infoCarros.push({ posicao: new THREE.Vector3(), velocidade: 0 });
     this.infoCarros.length = this.carros.length;
     this.carros.forEach((c, i) => {
-      this.infoCarros[i].posicao.set(c.x, CARRO_Y, c.z);
+      this.infoCarros[i].posicao.set(c.x, CARRO_Y + alturaTerreno(c.x, c.z), c.z);
       this.infoCarros[i].velocidade = c.v;
     });
     return { pedestres: this.infoPed, carros: this.infoCarros, eventos: this.eventos.splice(0) };
@@ -1018,12 +1028,18 @@ export class Trafego {
     c.fx = dx / l;
     c.fz = dz / l;
     c.yaw = Math.atan2(c.fx, c.fz);
-    _q.setFromAxisAngle(_eixoY, c.yaw);
+    // relevo (rampa): sobe o carro e inclina pelo declive entre os eixos
+    const hT = alturaTerreno(c.x, c.z);
+    const hF = alturaTerreno(c.x + c.fx * 1.2, c.z + c.fz * 1.2);
+    const hR = alturaTerreno(c.x - c.fx * 1.2, c.z - c.fz * 1.2);
+    c.arfagem = Math.atan2(hF - hR, 2.4);
+    _q.setFromAxisAngle(_eixoY, c.yaw).multiply(_qArf.setFromAxisAngle(_eixoX, -c.arfagem));
+    const y = CARRO_Y + hT;
     if (teleporte) {
-      c.corpo.setTranslation({ x: c.x, y: CARRO_Y, z: c.z }, true);
+      c.corpo.setTranslation({ x: c.x, y, z: c.z }, true);
       c.corpo.setRotation({ x: _q.x, y: _q.y, z: _q.z, w: _q.w }, true);
     } else {
-      c.corpo.setNextKinematicTranslation({ x: c.x, y: CARRO_Y, z: c.z });
+      c.corpo.setNextKinematicTranslation({ x: c.x, y, z: c.z });
       c.corpo.setNextKinematicRotation({ x: _q.x, y: _q.y, z: _q.z, w: _q.w });
     }
   }
@@ -1149,6 +1165,19 @@ export class Trafego {
           if (mod(frente - iv.sIni, r.L) < compr) continue; // já está na faixa: segue
           const d = mod(iv.sIni - frente, r.L);
           if (d < OLHAR) limitar(d, 0, 1.2);
+        } else if (iv.tipo === 'semaforo') {
+          // Semáforo: para na linha no vermelho; no amarelo só se ainda der para parar.
+          const zt = this.zonas[iv.zona];
+          const sem = this.sim.mapa.semaforos.find((x) => x.id === zt.zona.id);
+          if (!sem) continue;
+          const cor = corSemaforo(sem, this.sim.tempo);
+          if (cor === 'verde') continue;
+          const rel = mod(iv.sIni - c.s, r.L);
+          if (rel > r.L / 2) continue; // já passou
+          const d = rel - CARRO_MEIO_COMP - 0.3;
+          if (d < 0) continue; // já está sobre a linha: segue
+          if (cor === 'amarelo' && d < (c.v * c.v) / (2 * A_FREIO) + 1) continue;
+          if (d < OLHAR + 5) limitar(d, 0, 0);
         } else {
           const rel = mod(iv.sFim - c.s, r.L);
           if (rel > r.L / 2) {
@@ -1162,7 +1191,8 @@ export class Trafego {
           limitar(d, 0, 0);
           if (c.v < 0.15 && d < 1.5) {
             c.parado += dt;
-            if (c.parado >= TEMPO_PARE && this.livreAposPare(c, iv)) {
+            const pn = this.zonas[iv.zona].zona.nome.toUpperCase().includes('PN');
+            if (c.parado >= TEMPO_PARE && this.livreAposPare(c, iv) && !(pn && this.passagemBloqueada())) {
               c.pareCumprido = q;
               c.parado = 0;
             }

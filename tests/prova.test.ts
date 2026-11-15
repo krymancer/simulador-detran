@@ -4,7 +4,7 @@ import { KWID, MOBI } from '../src/sim/carConfig';
 import { Comandos, COMANDOS_NEUTROS } from '../src/sim/powertrain';
 import { iniciarRapier, Simulacao, HZ_FISICA, DT_FISICA } from '../src/sim/simulation';
 import { lerMapa } from '../src/world/parser';
-import { criarMapaTeste } from '../src/world/testMap';
+import { criarMapaMinimo } from './mapaMinimo';
 import { Cabine, Prova } from '../src/exam/exam';
 
 beforeAll(async () => {
@@ -12,7 +12,7 @@ beforeAll(async () => {
 });
 
 function novo() {
-  const mapa = lerMapa(criarMapaTeste());
+  const mapa = lerMapa(criarMapaMinimo());
   const sim = new Simulacao(mapa, KWID);
   const prova = new Prova(sim);
   const rodar = (seg: number, cmd: (t: number) => Partial<Comandos>, cabine: Cabine = { seta: null, cinto: true }) => {
@@ -89,11 +89,17 @@ describe('mapa de teste + prova', () => {
 });
 
 describe('mapa da autoescola (planta)', () => {
-  it('gera pista, calçadas, baliza, faixas, PARE e spawn', async () => {
+  it('gera pista, calçadas, baliza, faixas, semáforos, PARE, trilhos, rampa e spawn', async () => {
     const { criarMapaAutoescola } = await import('../src/world/autoescola');
     const mapa = lerMapa(criarMapaAutoescola());
     const tipos = mapa.zonas.map((z) => z.tipo).sort();
-    expect(tipos).toEqual(['baliza', 'faixa_pedestre', 'faixa_pedestre', 'faixa_pedestre', 'pare', 'pare']);
+    expect(tipos).toEqual([
+      'baliza', 'faixa_pedestre', 'faixa_pedestre', 'faixa_pedestre',
+      'linha_parada', 'linha_parada', 'linha_parada', 'pare', 'pare', 'pare', 'rampa', 'rampa',
+    ]);
+    expect(mapa.semaforos.map((s) => s.id).sort()).toEqual(['1', '2', '3']);
+    // cada linha de retenção tem o seu semáforo
+    for (const z of mapa.zonas.filter((x) => x.tipo === 'linha_parada')) expect(mapa.semaforos.some((s) => s.id === z.id)).toBe(true);
     expect(mapa.obstaculos.filter((o) => o.tipo === 'baliza')).toHaveLength(4);
     expect(mapa.colisores.some((c) => c.tipo === 'calcada')).toBe(true);
     const sim = new Simulacao(mapa, MOBI);
@@ -142,5 +148,29 @@ describe('faixas da pista (vias)', () => {
     expect(pr.distancia).toBeLessThan(0.05);
     // diagonal anda para −Z (subindo na planta)
     expect(amostrar(faixaPorId('diagonal_2'), 5).direcao.z).toBeLessThan(-0.5);
+  });
+});
+
+describe('rampa da pista da autoescola', () => {
+  it('o relevo sobe ~0,9 m e o carro segura na subida com freio de mão', async () => {
+    const { criarMapaAutoescola, alturaTerreno, px, RAMPA, METROS_POR_PX } = await import('../src/world/autoescola');
+    const centro = px(1440, RAMPA.yCentroPx);
+    expect(alturaTerreno(centro.x, centro.z)).toBeCloseTo(RAMPA.alturaM, 3);
+    // meio da subida (sentido norte)
+    const meio = px(1440, RAMPA.yCentroPx + (RAMPA.platoM + RAMPA.rampaM / 2) / METROS_POR_PX);
+    const h = alturaTerreno(meio.x, meio.z);
+    expect(h).toBeGreaterThan(0.3);
+    const mapa = lerMapa(criarMapaAutoescola());
+    mapa.spawn = { posicao: new THREE.Vector3(meio.x, h, meio.z), yaw: Math.PI }; // de frente para o norte (−Z)
+    const sim = new Simulacao(mapa, MOBI);
+    for (let i = 0; i < HZ_FISICA; i++) sim.passo({ ...COMANDOS_NEUTROS, freioDeMao: true });
+    const p0 = sim.carro.corpo.translation();
+    for (let i = 0; i < 3 * HZ_FISICA; i++) sim.passo({ ...COMANDOS_NEUTROS, freioDeMao: true });
+    const p1 = sim.carro.corpo.translation();
+    const t = sim.carro.corpo.translation();
+    console.log('rampa: altura do carro', (t.y - MOBI.alturaCG).toFixed(2), 'm; deslizou', (Math.hypot(p1.x - p0.x, p1.z - p0.z) * 100).toFixed(1), 'cm');
+    expect(t.y - MOBI.alturaCG).toBeGreaterThan(0.25);
+    expect(Math.hypot(p1.x - p0.x, p1.z - p0.z)).toBeLessThan(0.03);
+    expect(sim.carro.rodas.every((r) => r.noChao)).toBe(true);
   });
 });

@@ -65,7 +65,19 @@ export interface Mensagem {
 export interface Cabine {
   seta: 'esquerda' | 'direita' | null;
   cinto: boolean;
+  /**
+   * Farol baixo aceso. OPCIONAL: o main.ts deve passar `ent.farol`. Sem ele (undefined), o
+   * examinador não cobra a instrução de acender o farol.
+   */
+  farol?: boolean;
+  /**
+   * Pisca-alerta ligado. OPCIONAL: o main.ts deve passar `ent.alerta`. Sem ele, não há a falta
+   * de pisca-alerta em movimento nem a cobrança da instrução.
+   */
+  alerta?: boolean;
 }
+
+export type GeometriaCarro = ReturnType<Prova['geometria']>;
 
 const _p = new THREE.Vector3();
 const _tmp = new THREE.Vector3();
@@ -95,7 +107,17 @@ export class Prova {
   private banguelaMultada = false;
   private ultimoArranhou = -999;
   private paradoTempo = 0;
-  private ancoraRampa: { pos: THREE.Vector3; frente: THREE.Vector3 } | null = null;
+  private ancoraRampa: { zona: Zona; pos: THREE.Vector3; frente: THREE.Vector3 } | null = null;
+  // pisca-alerta em movimento
+  private alertaTempo = 0;
+  private alertaMultado = false;
+  /** Último estado da cabine recebido (o examinador lê farol / pisca-alerta daqui). */
+  cabine: Cabine | null = null;
+  /**
+   * Manobra pedida pelo examinador em curso (meia-volta, estacionar no fim): suspende a
+   * cobrança da placa PARE e da seta em conversões, que não fazem sentido no meio da manobra.
+   */
+  emManobra = false;
   private faixaMultada = false;
   private dentroLinha = new Map<Zona, boolean>();
   private estadoPare = new Map<Zona, { dentro: boolean; parou: boolean }>();
@@ -208,8 +230,13 @@ export class Prova {
     this.avisar(this.aprovado ? 'Prova encerrada: APROVADO' : 'Prova encerrada: REPROVADO', this.aprovado ? 'info' : 'eliminatoria');
   }
 
-  /** Cantos da carroceria (mundo, no plano do chão) e ponto do para-choque dianteiro. */
-  private geometria() {
+  /** Último instante (tempo da simulação) em que a seta deste lado estava ligada. */
+  ultimaSeta(lado: 'esquerda' | 'direita'): number {
+    return this.ultimaSetaLado[lado];
+  }
+
+  /** Cantos da carroceria (mundo: [esq. frente, dir. frente, esq. trás, dir. trás] — +X local é a esquerda) e para-choque. */
+  geometria() {
     const corpo = this.sim.carro.corpo;
     const cb = this.sim.carro.cfg.carroceria;
     const t = corpo.translation();
@@ -259,6 +286,7 @@ export class Prova {
     const v = carro.velocidadeLongitudinal();
     const vAbs = Math.abs(v);
     const g = this.geometria();
+    this.cabine = cabine;
 
     for (const e of eventos) {
       if (e === 'pegou' && !this.iniciada) {
@@ -298,6 +326,18 @@ export class Prova {
     if (!this.setaAvaliada && g.pos.distanceTo(sim.mapa.spawn.posicao) > 2.5) {
       this.setaAvaliada = true;
       if (t - this.ultimoTempoSeta > 6) this.falta('sem_seta');
+    }
+
+    // Pisca-alerta com o carro andando (CTB art. 251, I): só vale em imobilização/emergência.
+    if (cabine.alerta && vAbs > 2) {
+      this.alertaTempo += dt;
+      if (this.alertaTempo > 3 && !this.alertaMultado) {
+        this.alertaMultado = true;
+        this.falta('pisca_alerta_movimento');
+      }
+    } else if (!cabine.alerta) {
+      this.alertaTempo = 0;
+      this.alertaMultado = false;
     }
 
     // Freio de mão puxado andando
@@ -363,14 +403,15 @@ export class Prova {
 
     for (const z of sim.mapa.zonas) {
       if (z.tipo === 'rampa') {
+        // (cada zona de rampa cuida só da sua âncora: com duas rampas, uma não apaga a da outra)
         if (!dentroDaZona(z, g.pos, _tmp)) {
-          this.ancoraRampa = null;
+          if (this.ancoraRampa?.zona === z) this.ancoraRampa = null;
           continue;
         }
         if (!this.ancoraRampa && this.paradoTempo > 0.5) {
-          this.ancoraRampa = { pos: g.pos.clone(), frente: g.frente.clone() };
+          this.ancoraRampa = { zona: z, pos: g.pos.clone(), frente: g.frente.clone() };
         }
-        if (this.ancoraRampa) {
+        if (this.ancoraRampa?.zona === z) {
           const d = _tmp.copy(g.pos).sub(this.ancoraRampa.pos).dot(this.ancoraRampa.frente);
           if (d < -0.4 && trem.marchaEngatada !== -1) {
             this.falta('recuou_rampa');
@@ -400,10 +441,14 @@ export class Prova {
         if (dentro) {
           if (!e.dentro) e.parou = false;
           if (vAbs < 0.1) e.parou = true;
-        } else if (e.dentro && v > 0.3 && !e.parou) {
-          // Saiu pela frente sem ter parado — só conta no sentido da via (eixo +Z local da zona).
+        } else if (e.dentro && v > 0.3) {
+          // Saiu pela frente — só conta no sentido da via (eixo +Z local da zona).
           const sentido = new THREE.Vector3().setFromMatrixColumn(new THREE.Matrix4().copy(z.inversa).invert(), 2).normalize();
-          if (sentido.dot(g.frente) > 0.5) this.falta('nao_parou_pare');
+          if (sentido.dot(g.frente) > 0.5 && !(this.emManobra && !z.id.startsWith('PN'))) {
+            const linhaFerrea = z.id.startsWith('PN');
+            if (!e.parou) this.falta(linhaFerrea ? 'nao_parou_linha_ferrea' : 'nao_parou_pare');
+            if (linhaFerrea && trafego?.passagemFechada) this.falta('avancou_passagem_nivel');
+          }
         }
         e.dentro = dentro;
         this.estadoPare.set(z, e);
@@ -434,7 +479,7 @@ export class Prova {
   // Regras de trânsito: velocidade, contramão, linha divisória, seta, pedestre,
   // freada brusca, rotação.
 
-  private regrasDeTransito(dt: number, _cmd: Comandos, g: ReturnType<Prova['geometria']>, v: number, trafego?: InfoTrafego): void {
+  private regrasDeTransito(dt: number, _cmd: Comandos, g: GeometriaCarro, v: number, trafego?: InfoTrafego): void {
     const sim = this.sim;
     const t = sim.tempo;
     const vAbs = Math.abs(v);
@@ -529,7 +574,7 @@ export class Prova {
     if (!this.pista.ativa) return;
     const pista = this.pista;
     const leitura = pista.faixaEm(g.pos);
-    const balizaEmCurso = this.balizaInicio !== null && (this.balizaConcluida === null || t - (this.balizaInicio + this.balizaConcluida) < 8);
+    const balizaEmCurso = this.emManobra || this.balizaInicio !== null && (this.balizaConcluida === null || t - (this.balizaInicio + this.balizaConcluida) < 8);
     const pertoBaliza = sim.mapa.zonas.some((z) => z.tipo === 'baliza' && Math.hypot(g.pos.x - z.centro.x, g.pos.z - z.centro.z) < 14);
 
     // --- Contramão: andando para a frente, contra o sentido da faixa, por mais de 1,5 s.
@@ -659,7 +704,7 @@ export class Prova {
   }
 
   /** Há pedestre ou carro logo à frente (freada justificada)? */
-  private haMotivoParaFrear(g: ReturnType<Prova['geometria']>, trafego?: InfoTrafego): boolean {
+  private haMotivoParaFrear(g: GeometriaCarro, trafego?: InfoTrafego): boolean {
     if (this.contato.size > 0) return true;
     if (!trafego) return false;
     const aFrente = (p: THREE.Vector3, alcance: number) => {
