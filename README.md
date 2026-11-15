@@ -26,7 +26,10 @@ npm test         # testes de física e da prova (headless, Node)
 | `src/world/vias.ts` | Linhas centrais das faixas (gerado por `node scripts/gerar-vias.mjs`). |
 | `src/world/trafego.ts` | Carros e pedestres controlados pelo jogo. |
 | `src/audio/somCarro.ts` | Som sintetizado do motor, pneus, rodagem e eventos (marcha, freio de mão, cinto, seta, batida). |
-| `src/render/opcoes.ts` | Menu de opções (tecla O). |
+| `src/render/opcoes.ts` | Menu de opções (tecla O): carro, volante, horário (dia/entardecer/noite), qualidade, som. |
+| `src/treino/*`, `src/render/treinoUi.ts` | Treino guiado (tecla T): conhecer o carro, sair/trocar/parar, placas, rampa e baliza com referências. |
+| `src/world/ferrovia.ts`, `src/audio/somFerrovia.ts` | Passagem de nível: trem, cancelas, luzes, sino e buzina. |
+| `src/world/iluminacao.ts` | Iluminação pública noturna. |
 | `src/exam/exam.ts` | Avaliador: detecta as faltas a cada passo da física. |
 | `src/input/` | Teclado + Gamepad API (controle, G29, câmbio H) e a tela de calibração (F2). |
 | `src/render/`, `src/audio/` | Carro low-poly, cockpit com volante girando, retrovisores, HUD, som do motor sintetizado. |

@@ -12,7 +12,11 @@ import { configurarCeu } from './world/ambiente';
 import { atualizarIluminacaoPublica, criarIluminacaoPublica } from './world/iluminacao';
 import { FAIXAS } from './world/vias';
 import { AREAS_LIVRES_FERROVIA_PX } from './world/ferrovia';
-import { METROS_POR_PX } from './world/autoescola';
+import { alturaTerreno, METROS_POR_PX, px } from './world/autoescola';
+import { Treino } from './treino/treino';
+import type { AlvoCamera, Dispositivo } from './treino/tipos';
+import { GuiasTreino, UiTreino } from './render/treinoUi';
+import { Acao, ehVolante } from './input/input';
 import { corSemaforo, CorSemaforo, Prova } from './exam/exam';
 import { Entrada, EstadoEntrada } from './input/input';
 import { Calibracao } from './input/calibration';
@@ -292,6 +296,120 @@ const camPos = new THREE.Vector3();
 const camAlvo = new THREE.Vector3();
 let camIniciada = false;
 
+// ---------- Treino guiado ----------
+let focoCamera: AlvoCamera = null;
+let focoPeso = 0;
+/** Pontos das peças do carro no referencial do carro (aprox. do modelo do Mobi). */
+function pontoDoCarro(a: Exclude<AlvoCamera, null>): THREE.Vector3 {
+  const Y = (h: number) => h - CARRO.alturaCG;
+  switch (a) {
+    case 'volante': return new THREE.Vector3(0.36, Y(0.9), -0.05);
+    case 'pedais': return new THREE.Vector3(0.34, Y(0.32), 0.38);
+    case 'cambio': return new THREE.Vector3(0.02, Y(0.62), 0.05);
+    case 'freioDeMao': return new THREE.Vector3(0, Y(0.47), -0.5);
+    case 'espelhoCentro': return new THREE.Vector3(0, Y(1.31), -0.01);
+    case 'espelhoEsq': return new THREE.Vector3(0.96, Y(1.04), 0.44);
+    case 'espelhoDir': return new THREE.Vector3(-0.96, Y(1.04), 0.44);
+    case 'painel': return new THREE.Vector3(0.36, Y(0.98), 0.18);
+    case 'frente': return new THREE.Vector3(0.36, Y(1.1), 12);
+  }
+}
+
+const NOMES_G29 = ['X', '□', '○', '△', 'borboleta direita', 'borboleta esquerda', 'R2', 'L2', 'Share', 'Options', 'R3', 'L3',
+  'câmbio na 1ª', 'câmbio na 2ª', 'câmbio na 3ª', 'câmbio na 4ª', 'câmbio na 5ª', 'câmbio na 6ª', 'câmbio na ré', '+', '−'];
+const NOMES_CONTROLE = ['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', 'Select/Share', 'Start/Options', 'L3', 'R3', 'direcional ↑', 'direcional ↓', 'direcional ←', 'direcional →'];
+const NOMES_TECLADO: Partial<Record<Acao, string>> = {
+  volante: 'A/D (ou ←/→)', acelerador: 'W (ou ↑)', freio: 'S (ou ↓)', embreagem: 'Shift',
+  marcha1: 'tecla 1', marcha2: 'tecla 2', marcha3: 'tecla 3', marcha4: 'tecla 4', marcha5: 'tecla 5', marchaR: 'tecla R',
+  freioDeMao: 'Espaço', partida: 'tecla I', setaEsq: 'tecla Q', setaDir: 'tecla E', farol: 'tecla L', alerta: 'tecla K',
+  cinto: 'tecla C', olharEsq: 'tecla Z', olharDir: 'tecla X', olharTras: 'tecla B', camera: 'tecla V', encerrar: 'Enter', reiniciar: 'Backspace',
+};
+
+function perfilControles(): { dispositivo: Dispositivo; nomeDe: (acao: Acao) => string } {
+  const gps = entrada.gamepads();
+  const gp = gps.find((g) => ehVolante(g)) ?? gps[0];
+  if (!gp) return { dispositivo: 'teclado', nomeDe: (a) => NOMES_TECLADO[a] ?? a };
+  const perfil = entrada.perfil(gp);
+  const volante = perfil.tipo === 'volante';
+  return {
+    dispositivo: volante ? 'volante' : 'controle',
+    nomeDe: (a) => {
+      const v = perfil.vinculos[a];
+      if (!v) return `${NOMES_TECLADO[a] ?? a} (teclado)`;
+      if (v.tipo === 'botao') return `botão ${(volante ? NOMES_G29 : NOMES_CONTROLE)[v.indice] ?? v.indice}`;
+      if (v.tipo === 'eixoBotao') return volante ? (v.alvo < 0 || v.alvo > 0.5 ? 'direcional ←' : 'direcional →') : `eixo ${v.indice}`;
+      if (volante) {
+        if (a === 'volante') return 'o volante';
+        if (a === 'embreagem') return 'o pedal da esquerda (embreagem)';
+        if (a === 'freio') return 'o pedal do meio (freio)';
+        if (a === 'acelerador') return 'o pedal da direita (acelerador)';
+      } else {
+        if (a === 'volante') return 'o analógico esquerdo';
+        if (a === 'embreagem') return 'o analógico direito para baixo';
+        if (a === 'olhar') return 'o analógico direito para os lados';
+      }
+      return `eixo ${v.indice}`;
+    },
+  };
+}
+
+/** Voz em português, em fila (não corta a frase anterior). */
+function falar(texto: string): void {
+  if (!opcoes.valores.vozExaminador || typeof speechSynthesis === 'undefined') return;
+  const u = new SpeechSynthesisUtterance(texto);
+  u.lang = 'pt-BR';
+  const voz = speechSynthesis.getVoices().find((v) => v.lang.toLowerCase().startsWith('pt'));
+  if (voz) u.voice = voz;
+  u.volume = Math.min(1, opcoes.valores.volume + 0.2);
+  speechSynthesis.speak(u);
+}
+
+let entAtual: EstadoEntrada | null = null;
+const treino = new Treino({
+  get sim() { return jogo!.sim; },
+  entrada: () => entAtual!,
+  perfilControles,
+  focarCamera: (a) => {
+    focoCamera = a;
+    if (a) modoCamera = 'cockpit';
+  },
+  teleportar: (x, y, yaw) => {
+    if (!jogo) return;
+    const p = px(x, y);
+    p.y = alturaTerreno(p.x, p.z);
+    jogo.sim.carro.posicionar(p, yaw);
+    jogo.sim.reporObstaculos();
+    jogo.ferrovia?.reiniciar();
+    entrada.reiniciarCabine();
+    camIniciada = false;
+  },
+  falar,
+});
+const guias = new GuiasTreino();
+cena.add(guias.grupo);
+let treinoAnterior: string | null = null;
+const uiTreino = new UiTreino(app, treino, (id) => {
+  if (!jogo) return;
+  // Sem trânsito durante o treino (a lição usa as faixas livres); sem prova.
+  removerTrafego();
+  treino.iniciar(id);
+});
+
+/** Liga/desliga o modo treino (esconde a prova e o examinador). */
+function aplicarModoTreino(): void {
+  const ativo = treino.ativa !== null;
+  document.querySelector('.hud .prova')?.classList.toggle('oculto', ativo);
+  if (!ativo && treinoAnterior !== null && jogo) {
+    // saiu do treino: volta para a prova do início, com o trânsito
+    jogo.trafego = criarTrafego(jogo.sim, jogo.mapa, opcoes.valores);
+    const f = jogo.ferrovia;
+    if (jogo.trafego && f) jogo.trafego.passagemBloqueada = () => f.estado !== 'livre';
+    focoCamera = null;
+    reiniciarCarro();
+  }
+  treinoAnterior = treino.ativa;
+}
+
 function atualizarCamera(dt: number, olharEntrada: number, olharTras: boolean): void {
   if (!jogo) return;
   const g = jogo.visual.grupo;
@@ -311,6 +429,15 @@ function atualizarCamera(dt: number, olharEntrada: number, olharTras: boolean): 
     camera.position.add(new THREE.Vector3(-0.2, 0.07, -0.08).multiplyScalar(olhar.tras).applyQuaternion(camera.quaternion));
     camera.rotateY(Math.PI + olhar.yawSuave); // câmera olha para −Z; carro aponta +Z
     camera.rotateX(-0.06 + olhar.pitch);
+    // Treino: aponta a câmera para uma peça do carro (o olhar do jogador tem prioridade)
+    const livre = Math.abs(olharEntrada) < 0.05 && !olharTras && !olhar.arrastando;
+    focoPeso += ((focoCamera && livre ? 1 : 0) - focoPeso) * Math.min(1, dt * 4);
+    if (focoCamera && focoPeso > 0.001) {
+      const alvo = pontoDoCarro(focoCamera).applyMatrix4(g.matrixWorld);
+      const q0 = camera.quaternion.clone();
+      camera.lookAt(alvo);
+      camera.quaternion.copy(q0.slerp(camera.quaternion, focoPeso));
+    }
     camera.fov = opcoes.valores.fov;
   } else {
     const frente = new THREE.Vector3(0, 0, 1).applyQuaternion(g.quaternion);
@@ -339,6 +466,10 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     if (opcoes.estaAberta) opcoes.fechar();
     else opcoes.abrir();
+  } else if (e.code === 'KeyT' && !calibracao.estaAberta && !opcoes.estaAberta) {
+    e.preventDefault();
+    if (uiTreino.menuAberto) uiTreino.fecharMenu();
+    else uiTreino.abrirMenu();
   } else if (e.code === 'F2') {
     e.preventDefault();
     if (calibracao.estaAberta) calibracao.fechar();
@@ -385,8 +516,10 @@ function quadro(agora: number): void {
   ultimo = agora;
   if (!jogo) return;
 
-  entrada.pausado = calibracao.estaAberta || opcoes.estaAberta;
+  entrada.pausado = calibracao.estaAberta || opcoes.estaAberta || uiTreino.menuAberto;
   const ent = entrada.ler(dt);
+  entAtual = ent;
+  const emTreino = treino.ativa !== null;
   const trem = jogo.sim.carro.trem;
 
   // Partida: apertar com o motor ligado desliga; segurar com ele desligado dá partida.
@@ -398,11 +531,14 @@ function quadro(agora: number): void {
   if (!ent.partida) bloqueiaPartida = false;
 
   if (ent.bordas.has('camera')) modoCamera = MODOS[(MODOS.indexOf(modoCamera) + 1) % MODOS.length];
-  if (ent.bordas.has('reiniciar')) reiniciarCarro();
-  if (ent.bordas.has('encerrar')) jogo.prova.encerrar();
+  if (ent.bordas.has('reiniciar')) {
+    if (emTreino) treino.repetir();
+    else reiniciarCarro();
+  }
+  if (ent.bordas.has('encerrar') && !emTreino) jogo.prova.encerrar();
 
   const cabine = { seta: ent.seta, cinto: ent.cinto, farol: ent.farol, alerta: ent.alerta };
-  if (!calibracao.estaAberta && !opcoes.estaAberta) {
+  if (!calibracao.estaAberta && !opcoes.estaAberta && !uiTreino.menuAberto) {
     acumulador += dt;
     let primeiro = true;
     while (acumulador >= DT_FISICA) {
@@ -420,7 +556,7 @@ function quadro(agora: number): void {
         for (const _ of jogo.ferrovia.eventos()) info.eventos.push('colisao_carro');
       }
       if (info?.eventos.includes('colisao_carro')) som.evento('batida', 0.8);
-      jogo.prova.atualizar(DT_FISICA, cmd, cabine, eventos, info);
+      if (!emTreino) jogo.prova.atualizar(DT_FISICA, cmd, cabine, eventos, info);
       acumulador -= DT_FISICA;
     }
   }
@@ -514,14 +650,19 @@ function quadro(agora: number): void {
   }
 
   hud.atualizar(jogo.sim.carro, ent, jogo.prova, t, piscando, modoCamera, dt);
-  if (jogo.examinador) {
+  // Treino guiado
+  if (emTreino) treino.atualizar(dt);
+  uiTreino.atualizar();
+  guias.atualizar(treino, dt);
+  aplicarModoTreino();
+  if (jogo.examinador && !emTreino) {
     jogo.examinador.atualizar(dt);
     uiExaminador.atualizar(jogo.examinador);
   } else {
     uiExaminador.ocultar();
   }
   // Fim da prova → relatório
-  if (jogo.prova.encerrada && !jogo.relatorioMostrado) {
+  if (!emTreino && jogo.prova.encerrada && !jogo.relatorioMostrado) {
     jogo.relatorioMostrado = true;
     mostrarRelatorio(app, jogo.prova, {
       urlMapa: urlChao,
@@ -566,6 +707,10 @@ async function iniciar(): Promise<void> {
     calibracao.abrir();
   };
   inicio.querySelector<HTMLButtonElement>('[data-acao="opcoes"]')!.onclick = () => opcoes.abrir();
+  inicio.querySelector<HTMLButtonElement>('[data-acao="treino"]')!.onclick = () => {
+    fecharInicio();
+    uiTreino.abrirMenu();
+  };
 
 }
 
