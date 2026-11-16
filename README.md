@@ -25,7 +25,9 @@ npm test         # testes de física e da prova (headless, Node)
 | `src/render/relatorio.ts` | Relatório no fim da prova: faltas, mapa com trajeto e histórico das tentativas. |
 | `src/world/vias.ts` | Linhas centrais das faixas (gerado por `node scripts/gerar-vias.mjs`). |
 | `src/world/autoescola/divisoria.json` | Centro da linha amarela contínua do anel, medido na textura (`node scripts/gerar-divisoria.mjs`). A falta de transpor a linha usa ele: conta quando o pneu passa da tinta. |
+| `src/world/chaoShader.ts`, `src/world/autoescola/campos.png` | Chão desenhado no shader: `campos.png` (gerado junto com `chao.png`) guarda a cobertura de tinta branca/amarela e de calçada/grama; o shader corta as bordas com antisserrilhado e põe granulado do asfalto, grama e juntas da calçada em metros. `chao.png` continua sendo usado no mapa do relatório e pelos scripts. |
 | `src/world/trafego.ts` | Carros e pedestres controlados pelo jogo. |
+| `src/world/modelosCarros.ts`, `public/carros/` | Carros do trânsito: [Car Kit da Kenney](https://kenney.nl/assets/car-kit) (CC0). Cor da pintura trocada no shader (célula do atlas), lanternas acendem no freio, setas nos cantos. Nos testes (sem navegador) o trânsito usa os carros simples. |
 | `src/audio/somCarro.ts` | Som sintetizado do motor, pneus, rodagem e eventos (marcha, freio de mão, cinto, seta, batida). |
 | `src/render/opcoes.ts` | Menu de opções (tecla O): carro, volante, horário (dia/entardecer/noite), qualidade, som. |
 | `src/treino/*`, `src/render/treinoUi.ts` | Treino guiado (tecla T): conhecer o carro, sair/trocar/parar, placas, rampa e baliza com referências. |

@@ -1,4 +1,5 @@
 import RAPIER from '@dimforge/rapier3d-compat';
+import { criarVisualModelo, type LuzAnimada } from './modelosCarros';
 import * as THREE from 'three';
 import type { Simulacao } from '../sim/simulation';
 import type { InfoTrafego } from './infoTrafego';
@@ -576,7 +577,7 @@ function marcarFusoes(rota: Rota, anel: Rota): void {
 interface VisualCarro {
   raiz: THREE.Group;
   rodas: THREE.Object3D[];
-  freio: THREE.MeshStandardMaterial;
+  freio: LuzAnimada;
   setaDir: THREE.MeshStandardMaterial;
   setaEsq: THREE.MeshStandardMaterial;
 }
@@ -756,7 +757,7 @@ export class Trafego {
         corpo, inicial: { rota, s },
       };
       if (this.visuais) {
-        c.visual = criarVisualCarro(CORES_CARRO[Math.floor(this.sorteio() * CORES_CARRO.length)]);
+        c.visual = criarVisualModelo(this.sorteio) ?? criarVisualCarro(CORES_CARRO[Math.floor(this.sorteio() * CORES_CARRO.length)]);
         this.grupo.add(c.visual.raiz);
       }
       this.carros.push(c);

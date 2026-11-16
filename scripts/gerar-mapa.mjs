@@ -1,5 +1,6 @@
 // Converte a planta da autoescola (imagem vista de cima) em:
 //   - src/world/autoescola/chao.png   textura do chão limpa (sem carros desenhados, sem logo; canteiros viram calçada/grama)
+//   - src/world/autoescola/campos.png  cobertura de tinta branca/amarela e calçada/grama (shader do chão)
 //   - src/world/autoescola/grade.json grade de colisão: quais células são calçada/canteiro (elevadas 15 cm)
 //
 // Regras:
@@ -194,7 +195,49 @@ for (let gy = 0; gy < GH; gy++) {
   linhas.push(runs.join(','));
 }
 
+// 8) Campos para o shader do chão: cobertura (0..1) de tinta branca (R), tinta amarela (G)
+//    e piso elevado (B: 0 asfalto, 0,5 calçada, 1 grama), levemente borrados. O shader corta
+//    em 0,5 com antisserrilhado, então as bordas ficam lisas em qualquer distância (em vez
+//    de cada pixel da planta virar um quadrado de 4 cm).
+const cw = new Float32Array(N), cy = new Float32Array(N), ct = new Float32Array(N);
+const sat = (v) => Math.max(0, Math.min(1, v));
+for (let i = 0; i < N; i++) {
+  if (elevado[i]) {
+    if (classe[i] === AMARELO && dist[i] < 12) { cy[i] = 1; ct[i] = 0.5; }
+    else ct[i] = dist[i] < 40 ? 0.5 : 1;
+    continue;
+  }
+  if (apagar[i]) continue;
+  const r = d[i * 4], g = d[i * 4 + 1], b = d[i * 4 + 2];
+  const lum = (r + g + b) / 3;
+  if (r - b > 60 && r > 90) cy[i] = sat((Math.min(r, g) - 60) / (225 - 60)); // amarelo (e a borda serrilhada dele)
+  else if (Math.max(r, g, b) - Math.min(r, g, b) < 40) cw[i] = sat((lum - 64) / (235 - 64)); // branco/cinza neutro
+}
+const borrar = (f) => {
+  const t = new Float32Array(N), o = new Float32Array(N);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x;
+    t[i] = 0.25 * f[y * W + Math.max(0, x - 1)] + 0.5 * f[i] + 0.25 * f[y * W + Math.min(W - 1, x + 1)];
+  }
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x;
+    o[i] = 0.25 * t[Math.max(0, y - 1) * W + x] + 0.5 * t[i] + 0.25 * t[Math.min(H - 1, y + 1) * W + x];
+  }
+  return o;
+};
+const campos = new PNG({ width: W, height: H });
+{
+  const [bw, by, bt] = [borrar(cw), borrar(cy), borrar(ct)];
+  for (let i = 0; i < N; i++) {
+    campos.data[i * 4] = Math.round(bw[i] * 255);
+    campos.data[i * 4 + 1] = Math.round(by[i] * 255);
+    campos.data[i * 4 + 2] = Math.round(bt[i] * 255);
+    campos.data[i * 4 + 3] = 255;
+  }
+}
+
 fs.mkdirSync(saidaDir, { recursive: true });
+fs.writeFileSync(path.join(saidaDir, 'campos.png'), PNG.sync.write(campos));
 fs.writeFileSync(path.join(saidaDir, 'chao.png'), PNG.sync.write(out));
 fs.writeFileSync(
   path.join(saidaDir, 'grade.json'),

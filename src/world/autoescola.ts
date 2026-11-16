@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import grade from './autoescola/grade.json';
+import { materialChao } from './chaoShader';
 
 /**
  * Pista da autoescola, gerada a partir da planta (imagem vista de cima) por
@@ -270,6 +271,8 @@ function zonaPorCantos(nome: string, a: [number, number], b: [number, number], l
 export interface OpcoesAutoescola {
   /** Textura do chão (chao.png). Sem ela (testes), usa cor lisa. */
   textura?: THREE.Texture;
+  /** Campos do chão (campos.png): com eles o chão é desenhado no shader, nítido de perto. */
+  campos?: THREE.Texture;
 }
 
 export function criarMapaAutoescola(op: OpcoesAutoescola = {}): THREE.Group {
@@ -279,7 +282,9 @@ export function criarMapaAutoescola(op: OpcoesAutoescola = {}): THREE.Group {
   const largM = W * METROS_POR_PX;
   const altM = H * METROS_POR_PX;
 
-  const matChao = new THREE.MeshStandardMaterial({ map: op.textura ?? null, color: op.textura ? 0xffffff : 0x3c3c3c, roughness: 0.92 });
+  const matChao = op.campos
+    ? materialChao(op.campos, largM, altM)
+    : new THREE.MeshStandardMaterial({ map: op.textura ?? null, color: op.textura ? 0xffffff : 0x3c3c3c, roughness: 0.92 });
   const matMeioFio = new THREE.MeshStandardMaterial({ color: 0xb8b3a8, roughness: 0.85 });
 
   // Asfalto: um plano com a planta inteira como textura.

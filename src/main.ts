@@ -8,9 +8,11 @@ import { lerMapa, Mapa } from './world/parser';
 import { criarMapaAutoescola } from './world/autoescola';
 import { decorarAutoescola } from './world/autoescolaDecoracao';
 import urlChao from './world/autoescola/chao.png?url';
+import urlCampos from './world/autoescola/campos.png?url';
 import { configurarCeu } from './world/ambiente';
 import { atualizarIluminacaoPublica, criarIluminacaoPublica } from './world/iluminacao';
 import { FAIXAS } from './world/vias';
+import { carregarModelosCarros } from './world/modelosCarros';
 import { AREAS_LIVRES_FERROVIA_PX } from './world/ferrovia';
 import { alturaTerreno, METROS_POR_PX, px } from './world/autoescola';
 import { Treino } from './treino/treino';
@@ -250,10 +252,10 @@ function reiniciarCarro(): void {
 }
 
 async function mapaAutoescola(): Promise<THREE.Object3D> {
-  const tex = await new THREE.TextureLoader().loadAsync(urlChao);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-  const raiz = criarMapaAutoescola({ textura: tex });
+  const campos = await new THREE.TextureLoader().loadAsync(urlCampos);
+  campos.colorSpace = THREE.NoColorSpace; // coberturas, não cores
+  campos.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  const raiz = criarMapaAutoescola({ campos });
   decorarAutoescola(raiz);
   // Iluminação pública (antes de lerMapa: os postes viram sólidos). Fora do corredor do trem.
   const ilum = criarIluminacaoPublica(FAIXAS, {
@@ -717,7 +719,7 @@ function quadro(agora: number): void {
 
 // ---------- Início ----------
 async function iniciar(): Promise<void> {
-  await iniciarRapier();
+  await Promise.all([iniciarRapier(), carregarModelosCarros().catch((e) => console.warn('carros do trânsito: usando os simples', e))]);
   const params = new URLSearchParams(location.search);
   const glb = params.get('mapa');
   try {
