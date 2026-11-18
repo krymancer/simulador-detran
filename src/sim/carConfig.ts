@@ -75,6 +75,8 @@ export interface CarConfig {
     atritoDesligado: number;  // N·m, compressão + atrito com motor parado
     torqueMotorPartida: number;
     marchaLentaMaxAcelerador: number; // autoridade máxima do controle de marcha lenta (0–1)
+    /** Capacidade de ar da borboleta (rpm): acima de ~fluxo/3 rpm, pedal parcial perde torque. */
+    fluxoBorboleta: number;
   };
 
   embreagem: {
@@ -96,6 +98,8 @@ export interface CarConfig {
     torqueMaxDianteiro: number; // por roda
     torqueMaxTraseiro: number;
     freioDeMao: number;         // por roda traseira
+    /** ABS (obrigatório no Brasil desde 2014). */
+    abs: boolean;
   };
 
   aero: { cdA: number };
@@ -112,7 +116,7 @@ export interface CarConfig {
 export const KWID: CarConfig = {
   nome: 'Renault Kwid 1.0 (aprox.)',
 
-  massa: 860,
+  massa: 935, // ~785 kg em ordem de marcha + motorista + examinador
   inercia: [1050, 1150, 300],
   alturaCG: 0.55,
 
@@ -172,6 +176,7 @@ export const KWID: CarConfig = {
     atritoDesligado: 22,
     torqueMotorPartida: 45,
     marchaLentaMaxAcelerador: 0.2,
+    fluxoBorboleta: 23000,
   },
 
   embreagem: { torqueMax: 135, inicioPega: 0.3, fimPega: 0.75, expoente: 1.6 },
@@ -184,7 +189,7 @@ export const KWID: CarConfig = {
   },
 
   // Freio de mão ~0,25 g: segura a rampa, mas dá pra sair arrastando (falta comum!).
-  freio: { torqueMaxDianteiro: 1300, torqueMaxTraseiro: 600, freioDeMao: 320 },
+  freio: { torqueMaxDianteiro: 1300, torqueMaxTraseiro: 600, freioDeMao: 320, abs: true },
 
   aero: { cdA: 0.72 },
 };
@@ -203,7 +208,7 @@ export const RPM_PARA_RADS = (2 * Math.PI) / 60;
 export const MOBI: CarConfig = {
   ...KWID,
   nome: 'Fiat Mobi 1.0 (aprox.)',
-  massa: 1010, // 933 kg + motorista
+  massa: 1085, // 933 kg em ordem de marcha + motorista + examinador
   inercia: [1150, 1250, 330],
   alturaCG: 0.56,
   // Comprimento 3,566 m; largura 1,633 m; balanços ~0,70 m (frente) e ~0,56 m (trás).

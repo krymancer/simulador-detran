@@ -16,6 +16,7 @@ npm test         # testes de física e da prova (headless, Node)
 | `src/sim/powertrain.ts` | Motor (marcha lenta, freio-motor, apagar, partida, tranco), embreagem com patinagem, câmbio (arranha sem embreagem), diferencial aberto, giro das rodas e força longitudinal dos pneus. Roda a 1 kHz. Não depende de Rapier: dá pra testar isolado. |
 | `src/sim/vehicle.ts` | Suspensão por raycast, pneu lateral (Pacejka simplificado + “cerdas” para não escorregar parado), Ackermann, arrasto. Aplica forças no corpo rígido do Rapier. |
 | `src/sim/simulation.ts` | Mundo Rapier a 200 Hz. |
+| `tests/desempenho.test.ts` | Mede 0–100, retomadas, velocidade máxima, frenagem 100–0 (ABS) e aderência lateral (g), e confere com faixas de carros reais. `npx vitest run tests/desempenho.test.ts --silent=false` imprime a tabela e o mapa pedal → torque. |
 | `src/world/parser.ts` | Lê qualquer cena three.js/GLB pelas **convenções de nome** abaixo. |
 | `src/world/autoescola.ts` | Pista da autoescola, gerada da planta (`assets-fonte/mapa-autoescola.png`) por `node scripts/gerar-mapa.mjs`: textura do chão + grade de calçadas/meio-fio (15 cm). Baliza, faixas de pedestre, zonas de PARE e spawn ficam aqui. |
 | `src/world/autoescolaDecoracao.ts` | Placas (CTB), árvores e prédios da pista da autoescola. |

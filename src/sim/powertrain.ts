@@ -31,6 +31,18 @@ export interface EntradaRoda {
 
 export type EventoTrem = 'apagou' | 'pegou' | 'arranhou';
 
+/**
+ * Fração do torque de plena carga para um pedal (0–1) e giro. A área efetiva da borboleta
+ * cresce mais que linear com o pedal; o fluxo é saturado por 1 − e^(−q), q = fluxo·área/rpm,
+ * normalizado para pedal no fundo dar 100% em qualquer giro.
+ */
+export function cargaBorboleta(pedal: number, rpm: number, fluxo: number): number {
+  if (pedal <= 0) return 0;
+  const area = Math.pow(Math.min(1, pedal), 2);
+  const r = Math.max(rpm, 600);
+  return (1 - Math.exp((-fluxo * area) / r)) / (1 - Math.exp(-fluxo / r));
+}
+
 function interp(curva: [number, number][], x: number): number {
   if (x <= curva[0][0]) return curva[0][1];
   for (let i = 1; i < curva.length; i++) {
@@ -63,6 +75,11 @@ export class TremDeForca {
   private tempoDesdePegou = 99;
   aceleradorEfetivo = 0;
   torqueMotor = 0;
+  /** Carga do motor (0–1, fração do torque de plena carga): segue a borboleta com o atraso do coletor. */
+  carga = 0;
+  /** ABS: fração do torque de freio liberada em cada roda (1 = sem intervenção). */
+  readonly abs = [1, 1, 1, 1];
+  absAtuando = false;
 
   // Embreagem / câmbio
   marchaEngatada = 0; // −1, 0, 1..5
@@ -117,13 +134,18 @@ export class TremDeForca {
       if (rpm > m.rpmCorte) acel = 0; // corte de giro
       this.aceleradorEfetivo = acel;
       const atrito = this.atritoMotor(w);
-      // Borboleta progressiva: em giro baixo, pouca abertura já dá quase todo o torque
-      // (o coletor enche rápido); em giro alto a resposta fica linear.
-      const k = 1 + 2.5 * Math.max(0, 1 - rpm / 6000);
-      const carga = 1 - Math.pow(1 - acel, k);
-      torque = carga * (interp(m.curvaTorque, rpm) + atrito) - atrito * Math.sign(w || 1);
+      // Borboleta: o ar que passa por ela é limitado pela área aberta (quase não depende do
+      // giro), enquanto o motor "pede" ar proporcional ao giro. Então a mesma posição de pedal
+      // dá quase o torque todo em giro baixo e bem menos em giro alto: com meio pedal o carro
+      // acelera e vai estabilizando, em vez de puxar igual até o corte.
+      const cargaAlvo = cargaBorboleta(acel, rpm, m.fluxoBorboleta);
+      // Coletor de admissão: a pressão leva ~2 voltas do motor para acompanhar a borboleta.
+      const tau = 0.03 + 120 / Math.max(rpm, 500);
+      this.carga += (cargaAlvo - this.carga) * Math.min(1, dt / tau);
+      torque = this.carga * (interp(m.curvaTorque, rpm) + atrito) - atrito * Math.sign(w || 1);
     } else {
       this.aceleradorEfetivo = 0;
+      this.carga = 0;
       // Motor parado: compressão + atrito, que se opõe ao giro (suave perto de zero).
       torque = -m.atritoDesligado * Math.tanh(w / 2);
       if (cmd.partida && this.ignicao) {
@@ -249,14 +271,24 @@ export class TremDeForca {
       // 4) Integra motor e rodas
       this.omegaMotor += (dts * (Te - Tc)) / Ie;
       for (let i = 0; i < 4; i++) {
+        // ABS: roda escorregando mais que ~15% na frenagem → alivia a pressão daquela roda;
+        // quando ela volta a girar, devolve a pressão (ciclos de ~10 Hz, como o real).
+        // Abaixo de ~6 km/h desliga (o carro para com as rodas travadas, como os reais).
+        const vxi = rodas[i].vx + dvCarro;
+        if (cfg.freio.abs && rodas[i].noChao && Math.abs(vxi) > 1.7 && torqueFreio[i] > 0) {
+          const slip = (this.omegaRoda[i] * r - vxi) / Math.abs(vxi);
+          if (slip * Math.sign(vxi) < -0.15) this.abs[i] = Math.max(0.15, this.abs[i] - 40 * dts);
+          else this.abs[i] = Math.min(1, this.abs[i] + 12 * dts);
+        } else this.abs[i] = 1;
         const tracao = i < 2 ? 0.5 * Tc * G * eta : 0;
         let w = this.omegaRoda[i] + (dts * (tracao - f[i] * r)) / Iw;
         // Freio + rolagem como atrito seco: não pode inverter o giro.
         const rol = rodas[i].noChao ? p.resistenciaRolagem * rodas[i].fz * r : 0;
-        const dwFreio = (dts * (torqueFreio[i] + rol)) / Iw;
+        const freioRoda = torqueFreio[i] * (i >= 2 && cmd.freioDeMao ? 1 : this.abs[i]);
+        const dwFreio = (dts * (freioRoda + rol)) / Iw;
         if (Math.abs(w) <= dwFreio) {
           w = 0;
-          this.travada[i] = torqueFreio[i] > 0;
+          this.travada[i] = freioRoda > 0;
         } else {
           w -= Math.sign(w) * dwFreio;
           this.travada[i] = false;
@@ -287,6 +319,7 @@ export class TremDeForca {
     }
 
     for (let i = 0; i < 4; i++) this.fx[i] = fxSoma[i] / passos;
+    this.absAtuando = this.abs.some((a) => a < 0.99);
     this.torqueEmbreagem = somaEmbreagem / passos;
     this.patinando = patinou;
   }
