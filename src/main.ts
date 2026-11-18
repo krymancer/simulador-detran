@@ -713,7 +713,7 @@ function quadro(agora: number): void {
   }
 
   hud.atualizar(jogo.sim.carro, ent, jogo.prova, t, piscando, modoCamera, dt);
-  toque.atualizarUi({ marcha: ent.marcha, freioDeMao: ent.freioDeMao, cinto: ent.cinto, farol: ent.farol, alerta: ent.alerta, seta: ent.seta }, ent.volante);
+  toque.atualizarUi({ marcha: ent.marcha, freioDeMao: ent.freioDeMao, cinto: ent.cinto, farol: ent.farol, alerta: ent.alerta, seta: ent.seta, motorLigado: trem.ligado, velocidade: Math.abs(jogo.sim.carro.velocidadeLongitudinal()) }, ent.volante);
   // Treino guiado
   if (emTreino) treino.atualizar(dt);
   if (treino.geracao !== geracaoFalada) {

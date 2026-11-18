@@ -35,14 +35,17 @@ export interface EstadoBotoesToque {
   farol: boolean;
   alerta: boolean;
   seta: 'esquerda' | 'direita' | null;
+  motorLigado: boolean;
+  /** m/s, sem sinal */
+  velocidade: number;
 }
 
 const CSS = `
 .toque { position: fixed; inset: 0; z-index: 12; pointer-events: none; user-select: none; -webkit-user-select: none;
-  font: 600 12px system-ui, sans-serif; color: #e9edf2; --tq-fundo: rgba(14,17,22,.55); --tq-borda: rgba(255,255,255,.22); }
+  font: 600 12px system-ui, sans-serif; color: #e9edf2; --tq-alt: min(46vh, 260px); --tq-fundo: rgba(14,17,22,.55); --tq-borda: rgba(255,255,255,.22); }
 .toque * { -webkit-tap-highlight-color: transparent; }
 .toque .tq { position: absolute; pointer-events: auto; touch-action: none; }
-.tq-pedal { width: clamp(52px, 8vw, 84px); height: min(46vh, 260px); bottom: max(12px, env(safe-area-inset-bottom));
+.tq-pedal { width: clamp(52px, 8vw, 84px); height: var(--tq-alt); bottom: max(12px, env(safe-area-inset-bottom));
   background: var(--tq-fundo); border: 1px solid var(--tq-borda); border-radius: 14px; overflow: hidden; }
 .tq-pedal i { position: absolute; left: 0; right: 0; bottom: 0; height: 0; background: rgba(255,176,0,.55); }
 .tq-pedal b { position: absolute; left: 0; right: 0; top: 8px; text-align: center; font-size: 11px; pointer-events: none; text-shadow: 0 1px 2px #000; }
@@ -68,6 +71,17 @@ const CSS = `
 .tq-b.seta.on { background: rgba(61,220,132,.8); border-color: #3ddc84; }
 .tq-b.apertado { filter: brightness(1.6); }
 .toque.inclinar .tq-volante { display: none; }
+.toque:not(.inclinar) .so-inclinar { display: none; }
+.toque.compacto .so-tablet, .toque:not(.compacto) .so-celular { display: none !important; }
+.toque .escondido { display: none !important; }
+.tq-gaveta { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 8px; width: 300px; z-index: 30;
+  background: rgba(14,17,22,.92); border: 1px solid var(--tq-borda); border-radius: 12px; }
+.tq-gaveta .tq-b { font-size: 13px; }
+/* celular: pedais e câmbio um pouco menores, menos coisa no meio da tela */
+.toque.compacto { --tq-alt: min(50vh, 210px); }
+.toque.compacto .tq-volante { width: min(44vh, 170px); height: min(44vh, 170px); }
+.toque.compacto .tq-cambio { width: min(30vh, 120px); height: min(34vh, 140px); }
+.toque.compacto .tq-cambio div { font-size: 15px; }
 `;
 
 const clamp = (x: number, a: number, b: number) => Math.min(b, Math.max(a, x));
@@ -107,6 +121,11 @@ export class ControlesToque {
   private botoes = new Map<AcaoBotao, HTMLElement>();
   private apertados = new Map<AcaoBotao, number>(); // ação → contagem de dedos
   private bordas = new Set<AcaoBotao>();
+  // celular: menu ☰
+  private gaveta!: HTMLElement;
+  private itensGaveta = new Map<AcaoBotao, HTMLElement>();
+  private voltarFrente!: HTMLButtonElement;
+  private olharTrasLigado = false;
   /** Ações extras (menus) tratadas por quem cria os controles. */
   aoAcao: (a: 'treino' | 'opcoes' | 'telaCheia' | 'zerarInclinacao') => void = () => {};
 
@@ -174,33 +193,70 @@ export class ControlesToque {
       }
       this.raiz.append(c);
     };
-    const acimaPedais = 'calc(max(12px, env(safe-area-inset-bottom)) + min(46vh, 260px) + 8px)';
-    // acima da embreagem e do volante: setas e alerta (polegar esquerdo)
-    coluna({ left: margem, bottom: acimaPedais }, [['setaEsq', '◀ Seta', 'seta'], ['alerta', '⚠', 'alerta'], ['setaDir', 'Seta ▶', 'seta']], 'linha');
-    // acima do freio e do acelerador: partida, freio de mão, cinto, farol (2 × 2)
-    coluna({ right: margemD, bottom: acimaPedais }, [['partida', 'Partida'], ['freioDeMao', 'Freio de mão'], ['cinto', 'Cinto'], ['farol', 'Farol']], 'grade');
-    // topo à esquerda: olhar e câmera
-    coluna({ left: margem, top: 'max(8px, env(safe-area-inset-top))' }, [['olharEsq', '◀ Olhar'], ['olharTras', 'Trás'], ['olharDir', 'Olhar ▶']], 'linha');
-    // menus
-    const menus = el('div', 'tq tq-botoes linha');
-    Object.assign(menus.style, { left: margem, top: 'calc(max(8px, env(safe-area-inset-top)) + 46px)' });
+    const acimaPedais = 'calc(max(12px, env(safe-area-inset-bottom)) + var(--tq-alt) + 8px)';
+    const topo = 'max(8px, env(safe-area-inset-top))';
+    // acima da embreagem e do volante: setas (e alerta no tablet)
+    coluna({ left: margem, bottom: acimaPedais }, [['setaEsq', '◀ Seta', 'seta'], ['alerta', '⚠', 'alerta so-tablet'], ['setaDir', 'Seta ▶', 'seta']], 'linha');
+    // acima do freio e do acelerador. Partida, cinto e freio de mão só aparecem quando fazem
+    // sentido (motor desligado, sem cinto, parado/puxado); farol fica no menu no celular.
+    coluna({ right: margemD, bottom: acimaPedais }, [['partida', 'Partida'], ['freioDeMao', 'Freio de mão'], ['cinto', 'Cinto'], ['farol', 'Farol', 'so-tablet']], 'grade');
+    // tablet: olhar e menus no topo
+    coluna({ left: margem, top: topo }, [['olharEsq', '◀ Olhar'], ['olharTras', 'Trás'], ['olharDir', 'Olhar ▶']], 'linha so-tablet');
+    const menus = el('div', 'tq tq-botoes linha so-tablet');
+    Object.assign(menus.style, { left: margem, top: `calc(${topo} + 46px)` });
+    const cam = el('button', 'tq-b', 'Câmera');
+    cam.type = 'button';
+    this.ligarBotao(cam, 'camera');
+    menus.append(cam);
     for (const [acao, txt] of [['treino', 'Treino'], ['opcoes', 'Opções'], ['telaCheia', 'Tela cheia']] as const) {
       const b = el('button', 'tq-b', txt);
       b.type = 'button';
       b.addEventListener('click', () => this.aoAcao(acao));
       menus.append(b);
     }
+    this.raiz.append(menus);
+
+    // celular: um botão ☰ abre o resto
+    const barra = el('div', 'tq tq-botoes linha so-celular');
+    Object.assign(barra.style, { left: margem, top: topo });
+    const abrir = el('button', 'tq-b', '☰ Menu');
+    abrir.type = 'button';
+    abrir.addEventListener('click', () => this.gaveta.classList.toggle('oculto'));
+    this.voltarFrente = el('button', 'tq-b on oculto', '↩ Olhando para trás · voltar');
+    this.voltarFrente.type = 'button';
+    this.voltarFrente.addEventListener('click', () => this.alternarOlharTras(false));
+    barra.append(abrir, this.voltarFrente);
+    this.raiz.append(barra);
+
+    this.gaveta = el('div', 'tq tq-gaveta oculto');
+    Object.assign(this.gaveta.style, { left: margem, top: `calc(${topo} + 46px)` });
+    const item = (txt: string, fn: () => void, acao?: AcaoBotao) => {
+      const b = el('button', 'tq-b', txt);
+      b.type = 'button';
+      b.addEventListener('click', () => { fn(); this.gaveta.classList.add('oculto'); });
+      if (acao) this.itensGaveta.set(acao, b);
+      this.gaveta.append(b);
+    };
+    item('Olhar para trás', () => this.alternarOlharTras(true));
+    item('Câmera', () => this.bordas.add('camera'));
+    item('Farol', () => this.bordas.add('farol'), 'farol');
+    item('Pisca-alerta', () => this.bordas.add('alerta'), 'alerta');
+    item('Cinto', () => this.bordas.add('cinto'), 'cinto');
+    item('Treino', () => this.aoAcao('treino'));
+    item('Opções', () => this.aoAcao('opcoes'));
+    item('Tela cheia', () => this.aoAcao('telaCheia'));
+    this.raiz.append(this.gaveta);
+
     // modo inclinar: no lugar do volante, o botão de marcar o centro
     const zerar = el('button', 'tq tq-b so-inclinar', 'Zerar centro do volante');
     zerar.type = 'button';
     Object.assign(zerar.style, { left: this.volanteEl.style.left, bottom: 'max(12px, env(safe-area-inset-bottom))', height: '48px' });
     zerar.addEventListener('click', () => this.aoAcao('zerarInclinacao'));
     this.raiz.append(zerar);
-    const cam = el('button', 'tq-b', 'Câmera');
-    cam.type = 'button';
-    this.ligarBotao(cam, 'camera');
-    menus.prepend(cam);
-    this.raiz.append(menus);
+
+    const compacto = () => this.raiz.classList.toggle('compacto', Math.min(innerWidth, innerHeight) < 500);
+    compacto();
+    window.addEventListener('resize', compacto);
 
     window.addEventListener('devicemotion', (e) => {
       const g = e.accelerationIncludingGravity;
@@ -226,6 +282,11 @@ export class ControlesToque {
     for (const b of this.raiz.querySelectorAll<HTMLElement>('.so-inclinar')) b.classList.toggle('oculto', modo !== 'inclinar');
     document.body.classList.toggle('com-toque', ativo);
     if (!ativo) this.soltarTudo();
+  }
+
+  private alternarOlharTras(ligar: boolean): void {
+    this.olharTrasLigado = ligar;
+    this.voltarFrente.classList.toggle('oculto', !ligar);
   }
 
   zerarInclinacao(): void {
@@ -370,6 +431,7 @@ export class ControlesToque {
       volante = this.anguloVolante / MAX_VOLANTE_TELA;
     }
     const segurando = new Set(this.apertados.keys());
+    if (this.olharTrasLigado) segurando.add('olharTras');
     const bordas = new Set(this.bordas);
     this.bordas.clear();
     const marcha = this.marchaPedida;
@@ -397,6 +459,14 @@ export class ControlesToque {
     this.botoes.get('alerta')?.classList.toggle('on', e.alerta);
     this.botoes.get('setaEsq')?.classList.toggle('on', e.seta === 'esquerda');
     this.botoes.get('setaDir')?.classList.toggle('on', e.seta === 'direita');
+    // só o que faz sentido agora
+    this.botoes.get('partida')?.classList.toggle('escondido', e.motorLigado && !this.apertados.has('partida'));
+    this.botoes.get('cinto')?.classList.toggle('escondido', e.cinto && !this.apertados.has('cinto'));
+    this.botoes.get('freioDeMao')?.classList.toggle('escondido', !e.freioDeMao && e.velocidade > 1.5);
+    for (const [a, liga] of [['farol', e.farol], ['alerta', e.alerta], ['cinto', e.cinto]] as const) {
+      const b = this.itensGaveta.get(a);
+      if (b) b.textContent = `${{ farol: 'Farol', alerta: 'Pisca-alerta', cinto: 'Cinto' }[a]}: ${liga ? 'ligado' : 'desligado'}`;
+    }
     this.volanteSvg.setAttribute('transform', `rotate(${(volante * MAX_VOLANTE_TELA * 180) / Math.PI})`);
   }
 }
