@@ -17,6 +17,7 @@ npm test         # testes de física e da prova (headless, Node)
 | `src/sim/vehicle.ts` | Suspensão por raycast, pneu lateral (Pacejka simplificado + “cerdas” para não escorregar parado), Ackermann, arrasto. Aplica forças no corpo rígido do Rapier. |
 | `src/sim/simulation.ts` | Mundo Rapier a 200 Hz. |
 | `tests/desempenho.test.ts` | Mede 0–100, retomadas, velocidade máxima, frenagem 100–0 (ABS) e aderência lateral (g), e confere com faixas de carros reais. `npx vitest run tests/desempenho.test.ts --silent=false` imprime a tabela e o mapa pedal → torque. |
+| `src/render/cabeca.ts`, `tests/cabeca.test.ts` | Cabeça do motorista no cockpit: mola do pescoço contra a força G (freada, curva, lombada), vibração do motor (lenta, 3 cilindros) e da rua, trancos ao pegar/apagar/bater. Intensidade em Opções → “Movimento da cabeça” (0 = câmera presa). |
 | `src/world/parser.ts` | Lê qualquer cena three.js/GLB pelas **convenções de nome** abaixo. |
 | `src/world/autoescola.ts` | Pista da autoescola, gerada da planta (`assets-fonte/mapa-autoescola.png`) por `node scripts/gerar-mapa.mjs`: textura do chão + grade de calçadas/meio-fio (15 cm). Baliza, faixas de pedestre, zonas de PARE e spawn ficam aqui. |
 | `src/world/autoescolaDecoracao.ts` | Placas (CTB), árvores e prédios da pista da autoescola. |

@@ -27,6 +27,7 @@ import { Hud } from './render/hud';
 import { VisualCarro } from './render/carVisual';
 import { Retrovisores } from './render/mirrors';
 import { SomCarro } from './audio/somCarro';
+import { MovimentoCabeca } from './render/cabeca';
 import { Opcoes, Config } from './render/opcoes';
 import { Examinador } from './exam/examinador';
 import { UiExaminador } from './render/examinadorUi';
@@ -74,6 +75,9 @@ CARRO = opcoes.valores.carro === 'kwid' ? KWID : MOBI;
 ceu.definirHorario(opcoes.valores.horario, false);
 som = new SomCarro({ rpmMarchaLenta: CARRO.motor.rpmMarchaLenta, rpmCorte: CARRO.motor.rpmCorte });
 som.volume = opcoes.valores.volume;
+const cabeca = new MovimentoCabeca();
+cabeca.intensidade = opcoes.valores.movimentoCabeca;
+let tempoSimCamera = 0;
 
 function aplicarQualidade(c: Config): void {
   const dpr = window.devicePixelRatio || 1;
@@ -91,6 +95,7 @@ function aplicarQualidade(c: Config): void {
   toque.definir(c.controlesToque === 'sim' || (c.controlesToque === 'auto' && temToque()), c.direcaoToque);
   som.volume = c.volume;
   somFerrovia.volume = c.volume;
+  cabeca.intensidade = c.movimentoCabeca;
   if (ceu.horario !== c.horario) ceu.definirHorario(c.horario);
 }
 opcoes.aoMudar((c, antes) => {
@@ -245,6 +250,7 @@ function reiniciarCarro(): void {
   if (!jogo) return;
   jogo.sim.reposicionar();
   jogo.sim.reporObstaculos();
+  cabeca.reiniciar();
   jogo.trafego?.reiniciar();
   jogo.ferrovia?.reiniciar();
   jogo.prova = new Prova(jogo.sim);
@@ -484,13 +490,33 @@ function atualizarCamera(dt: number, olharEntrada: number, olharTras: boolean): 
   const alvoYaw = olharTras ? -2.75 : olhar.yaw - olharEntrada * 1.25;
   olhar.yawSuave += (alvoYaw - olhar.yawSuave) * Math.min(1, dt * 7);
   olhar.tras += ((olharTras ? 1 : 0) - olhar.tras) * Math.min(1, dt * 7);
+  // Cabeça do motorista: força G, vibração do motor e da rua
+  {
+    const c = jogo.sim.carro;
+    const lv = c.corpo.linvel();
+    const rq = c.corpo.rotation();
+    const tSim = jogo.sim.tempo;
+    cabeca.atualizar(dt, {
+      vel: new THREE.Vector3(lv.x, lv.y, lv.z),
+      rot: new THREE.Quaternion(rq.x, rq.y, rq.z, rq.w),
+      dtSim: Math.max(0, tSim - tempoSimCamera),
+      rpm: c.trem.rpm,
+      rpmLenta: c.cfg.motor.rpmMarchaLenta,
+      ligado: c.trem.ligado,
+      cilindros: c.cfg.motor.cilindros,
+      carga: c.trem.carga,
+    });
+    tempoSimCamera = tSim;
+  }
   if (modoCamera === 'cockpit') {
     jogo.visual.olho.getWorldPosition(camera.position);
     g.getWorldQuaternion(camera.quaternion);
+    camera.position.add(cabeca.desloc.clone().applyQuaternion(camera.quaternion));
     // Ao virar para trás, o tronco gira e a cabeça vai para o centro do carro.
     camera.position.add(new THREE.Vector3(-0.2, 0.07, -0.08).multiplyScalar(olhar.tras).applyQuaternion(camera.quaternion));
     camera.rotateY(Math.PI + olhar.yawSuave); // câmera olha para −Z; carro aponta +Z
-    camera.rotateX(-0.06 + olhar.pitch);
+    camera.rotateX(-0.06 + olhar.pitch + cabeca.giro.x);
+    camera.rotateZ(cabeca.giro.z);
     // Treino: aponta a câmera para uma peça do carro (o olhar do jogador tem prioridade)
     const livre = Math.abs(olharEntrada) < 0.05 && !olharTras && !olhar.arrastando;
     focoPeso += ((focoCamera && livre ? 1 : 0) - focoPeso) * Math.min(1, dt * 4);
@@ -610,14 +636,21 @@ function quadro(agora: number): void {
       jogo.ferrovia?.passo(DT_FISICA);
       jogo.sim.passo(cmd);
       const eventos = trem.eventos.splice(0);
-      for (const ev of eventos) som.evento(ev);
+      for (const ev of eventos) {
+        som.evento(ev);
+        if (ev === 'pegou') cabeca.tranco(0.005, 0.6, 6);
+        else if (ev === 'apagou') cabeca.tranco(0.012, 0.7, 4.5, 0.8);
+      }
       const info: InfoTrafego | undefined = jogo.trafego?.info() ?? (jogo.ferrovia ? { ...INFO_TRAFEGO_VAZIA, eventos: [] } : undefined);
       if (info && jogo.ferrovia) {
         info.passagemFechada = jogo.ferrovia.estado !== 'livre';
         // bater no trem conta como colisão (interrompe a prova)
         for (const _ of jogo.ferrovia.eventos()) info.eventos.push('colisao_carro');
       }
-      if (info?.eventos.includes('colisao_carro')) som.evento('batida', 0.8);
+      if (info?.eventos.includes('colisao_carro')) {
+        som.evento('batida', 0.8);
+        cabeca.tranco(0.02, 0.5, 8);
+      }
       if (!emTreino) jogo.prova.atualizar(DT_FISICA, cmd, cabine, eventos, info);
       acumulador -= DT_FISICA;
     }
@@ -683,19 +716,27 @@ function quadro(agora: number): void {
     if (ent.cinto !== anterior.cinto) som.evento('cinto');
     anterior.cinto = ent.cinto;
     let esc = 0;
+    let aderencia = 0;
     let naCalcada = false;
     carro.rodas.forEach((r, i) => {
       if (!r.noChao) return;
       esc = Math.max(esc, Math.hypot(trem.omegaRoda[i] * CARRO.roda.raio - r.vx, r.vy));
+      aderencia = Math.max(aderencia, r.uso);
       if (r.colisorChao !== null && jogo!.sim.tipoColisor.get(r.colisorChao) === 'calcada') naCalcada = true;
     });
     const lv = carro.corpo.linvel();
     const v = new THREE.Vector3(lv.x, lv.y, lv.z);
-    if (naCalcada && !anterior.naCalcada) som.evento('meioFio', Math.min(1, v.length() / 6));
+    if (naCalcada && !anterior.naCalcada) {
+      som.evento('meioFio', Math.min(1, v.length() / 6));
+      cabeca.tranco(0.008 * Math.min(1, v.length() / 6), 0.3, 11);
+    }
     anterior.naCalcada = naCalcada;
     // Batida: mudança brusca de velocidade (bem acima do que os freios conseguem)
     const dv = v.distanceTo(anterior.vel);
-    if (dt > 0 && dv / dt > 25 && dv > 0.8) som.evento('batida', Math.min(1, dv / 6));
+    if (dt > 0 && dv / dt > 25 && dv > 0.8) {
+      som.evento('batida', Math.min(1, dv / 6));
+      cabeca.tranco(0.025 * Math.min(1, dv / 6), 0.5, 8);
+    }
     anterior.vel.copy(v);
     som.atualizar(dt, {
       rpm: trem.rpm,
@@ -705,6 +746,7 @@ function quadro(agora: number): void {
       ignicao: trem.ignicao || trem.ligado,
       velocidade: v.length(),
       escorregamento: esc,
+      aderencia,
       freio: ent.freio,
       embreagem: ent.embreagem,
       marcha: trem.marchaEngatada,

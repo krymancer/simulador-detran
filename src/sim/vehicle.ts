@@ -23,7 +23,16 @@ export interface EstadoRoda {
   /** Força lateral do pneu já com a relaxação (não aparece instantânea). */
   fyRelax: number;
   compressao: number;
+  /** Atrito máximo disponível (N), já com a sensibilidade à carga. */
+  D: number;
+  /** Fração da aderência em uso (0 = folgado, 1 = no limite / deslizando). */
+  uso: number;
 }
+
+const suave = (a: number, b: number, x: number) => {
+  const u = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return u * u * (3 - 2 * u);
+};
 
 const _v = new THREE.Vector3();
 const _q = new THREE.Quaternion();
@@ -101,6 +110,8 @@ export class Veiculo {
         cerdaLat: 0,
         fyRelax: 0,
         compressao: 0,
+        D: 0,
+        uso: 0,
       };
     };
     this.rodas = [mk(true, true), mk(true, false), mk(false, true), mk(false, false)];
@@ -190,6 +201,8 @@ export class Veiculo {
         rd.compressaoAnterior = 0;
         rd.fz = 0;
         rd.fy = 0;
+        rd.D = 0;
+        rd.uso = 0;
         rd.colisorChao = null;
         rd.cerdaLat *= 0.9;
         entradas.push({ noChao: false, vx: 0, fxMax: 0, fz: 0 });
@@ -231,7 +244,11 @@ export class Veiculo {
       rd.vy = _v.dot(side);
 
       // Lateral: Pacejka simplificado + cerda para baixa velocidade (não escorrega parado).
-      const D = p.mu * fz;
+      // Sensibilidade à carga: dobrar a carga não dobra a aderência (por isso a transferência
+      // de peso numa curva tira aderência do eixo e o carro sai de frente/de traseira).
+      const fz0 = (cfg.massa * 9.81) / 4;
+      const D = p.mu * fz * Math.max(0.6, 1 - p.sensibilidadeCarga * (fz / fz0 - 1));
+      rd.D = D;
       const alfa = Math.atan2(rd.vy, Math.max(Math.abs(rd.vx), 3));
       const fyPacejka = -D * Math.sin(p.C * Math.atan(p.B * alfa));
       // Relaxação: a força lateral cresce ao longo de ~relaxacao metros rodados.
@@ -268,7 +285,19 @@ export class Veiculo {
       if (!rd.noChao) continue;
       let fx = this.trem.fx[i];
       let fy = rd.fy;
-      const D = p.mu * rd.fz;
+      const D = rd.D;
+      // Roda travada ou patinando: o pneu inteiro desliza e o atrito aponta contra o
+      // deslizamento total — quase nada sobra para segurar de lado (travar = perder a direção;
+      // freio de mão puxado = traseira solta).
+      const sx = this.trem.omegaRoda[i] * r - rd.vx;
+      const deslize = suave(0.15, 0.6, Math.abs(sx) / Math.max(Math.abs(rd.vx), 3));
+      if (deslize > 0) {
+        const vs = Math.hypot(sx, rd.vy);
+        if (vs > 0.05) {
+          const fyDesl = (-D * (1 - p.quedaDeslize) * rd.vy) / vs;
+          fy += (fyDesl - fy) * deslize;
+        }
+      }
       const tot = Math.hypot(fx, fy);
       if (tot > D && tot > 0) {
         // Pneu saturado: a lateral cede (patinar/travar faz perder direção).
@@ -277,6 +306,7 @@ export class Veiculo {
         if (Math.abs(fx) > D) fx = Math.sign(fx) * D;
       }
       rd.fy = fy;
+      rd.uso = D > 0 ? Math.max(deslize, Math.min(1, Math.hypot(fx, fy) / D)) : 0;
       // Suspensão no ponto de contato; forças do pneu no centro de rolagem do eixo
       // (a geometria da suspensão “levanta” o ponto onde a força lateral atua no chassi).
       const pz = rd.pontoContato;

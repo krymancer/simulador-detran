@@ -88,6 +88,14 @@ export class TremDeForca {
   patinando = false;
   arranhando = false;
 
+  // Semi-eixos: saída do câmbio (no diferencial) e torção acumulada até as rodas
+  /** Velocidade da saída do câmbio, na roda (rad/s). */
+  omegaSaida = 0;
+  /** Torção dos semi-eixos (rad, na roda): é ela que “empurra” as rodas. */
+  torcao = 0;
+  /** Torque que os semi-eixos passam às rodas motrizes (N·m, as duas juntas). */
+  torqueSemiEixo = 0;
+
   // Rodas
   readonly omegaRoda = [0, 0, 0, 0];
   private readonly cerda = [0, 0, 0, 0];
@@ -225,6 +233,8 @@ export class TremDeForca {
     const fxSoma = [0, 0, 0, 0];
     let dvCarro = 0; // variação da velocidade do carro dentro do passo
     let somaEmbreagem = 0;
+    let somaSemiEixo = 0;
+    const c = cfg.cambio;
     let patinou = false;
 
     for (let s = 0; s < passos; s++) {
@@ -241,8 +251,12 @@ export class TremDeForca {
         const kd = p.rigidezLongitudinal / Math.max(Math.abs(vx), 5);
         this.cerda[i] += escorregamento * dts;
         let fi = kd * escorregamento + p.rigidezCerdaLong * this.cerda[i];
-        const lim = rd.fxMax;
+        let lim = rd.fxMax;
         if (fi > lim || fi < -lim) {
+          // Passou do pico: deslizando de vez (patinando/travada) o atrito cai.
+          const sr = Math.abs(escorregamento) / Math.max(Math.abs(vx), 3);
+          const u = Math.min(1, Math.max(0, (sr - 0.12) / (0.6 - 0.12)));
+          lim *= 1 - p.quedaDeslize * u * u * (3 - 2 * u);
           fi = Math.sign(fi) * lim;
           const cmax = lim / p.rigidezCerdaLong;
           this.cerda[i] = Math.min(cmax, Math.max(-cmax, this.cerda[i]));
@@ -254,13 +268,18 @@ export class TremDeForca {
       const Te = this.calcTorqueMotor(dts, cmd);
       this.torqueMotor = Te;
 
-      // 3) Embreagem: torque que igualaria as rotações neste sub-passo, limitado à capacidade.
+      // 3) Semi-eixos: mola + amortecedor entre a saída do câmbio e as rodas motrizes.
+      // Pisar/tirar o pé de repente torce os eixos e o carro dá um tranco e balança (2–5 Hz).
+      const wRodas = 0.5 * (this.omegaRoda[0] + this.omegaRoda[1]);
+      const Iout = c.inerciaCaixa * G * G + 0.05; // primário refletido + diferencial
+      let Ts = 0;
+      if (G !== 0) Ts = c.rigidezSemiEixo * this.torcao + c.amortecimentoSemiEixo * (this.omegaSaida - wRodas);
+
+      // 4) Embreagem: torque que igualaria as rotações neste sub-passo, limitado à capacidade.
       let Tc = 0;
       if (G !== 0 && this.capacidadeEmbreagem > 0) {
-        const wCaixa = G * 0.5 * (this.omegaRoda[0] + this.omegaRoda[1]);
-        const carga = -0.5 * (f[0] + f[1]) * r; // torque médio que o chão faz nas rodas motrizes
-        const num = this.omegaMotor - wCaixa + dts * (Te / Ie - (G * carga) / Iw);
-        const den = dts * (1 / Ie + (G * G * eta) / (2 * Iw));
+        const num = this.omegaMotor - G * this.omegaSaida + dts * (Te / Ie + (G * Ts) / Iout);
+        const den = dts * (1 / Ie + (G * G * eta) / Iout);
         const travar = num / den;
         const cap = this.capacidadeEmbreagem;
         Tc = Math.min(cap, Math.max(-cap, travar));
@@ -268,8 +287,17 @@ export class TremDeForca {
       }
       somaEmbreagem += Tc;
 
-      // 4) Integra motor e rodas
+      // 5) Integra motor, saída do câmbio, semi-eixos e rodas
       this.omegaMotor += (dts * (Te - Tc)) / Ie;
+      if (G !== 0) {
+        this.omegaSaida += (dts * (Tc * G * eta - Ts)) / Iout;
+        this.torcao += dts * (this.omegaSaida - wRodas);
+      } else {
+        // em ponto morto a saída gira com as rodas e os eixos destorcem
+        this.omegaSaida = wRodas;
+        this.torcao = 0;
+      }
+      somaSemiEixo += Ts;
       for (let i = 0; i < 4; i++) {
         // ABS: roda escorregando mais que ~15% na frenagem → alivia a pressão daquela roda;
         // quando ela volta a girar, devolve a pressão (ciclos de ~10 Hz, como o real).
@@ -280,7 +308,7 @@ export class TremDeForca {
           if (slip * Math.sign(vxi) < -0.15) this.abs[i] = Math.max(0.15, this.abs[i] - 40 * dts);
           else this.abs[i] = Math.min(1, this.abs[i] + 12 * dts);
         } else this.abs[i] = 1;
-        const tracao = i < 2 ? 0.5 * Tc * G * eta : 0;
+        const tracao = i < 2 ? 0.5 * Ts : 0;
         let w = this.omegaRoda[i] + (dts * (tracao - f[i] * r)) / Iw;
         // Freio + rolagem como atrito seco: não pode inverter o giro.
         const rol = rodas[i].noChao ? p.resistenciaRolagem * rodas[i].fz * r : 0;
@@ -297,10 +325,10 @@ export class TremDeForca {
         fxSoma[i] += f[i];
       }
 
-      // 5) O carro acelera junto (acoplamento dentro do passo)
+      // 6) O carro acelera junto (acoplamento dentro do passo)
       dvCarro += ((f[0] + f[1] + f[2] + f[3]) / massa) * dts;
 
-      // 6) Liga / apaga
+      // 7) Liga / apaga
       this.tempoDesdePegou += dts;
       const limiarApaga = this.tempoDesdePegou < 1.5 ? m.rpmPega * 0.7 : m.rpmApaga;
       if (this.ligado && this.omegaMotor < limiarApaga * RPM_PARA_RADS) {
@@ -321,6 +349,7 @@ export class TremDeForca {
     for (let i = 0; i < 4; i++) this.fx[i] = fxSoma[i] / passos;
     this.absAtuando = this.abs.some((a) => a < 0.99);
     this.torqueEmbreagem = somaEmbreagem / passos;
+    this.torqueSemiEixo = somaSemiEixo / passos;
     this.patinando = patinou;
   }
 
@@ -331,6 +360,8 @@ export class TremDeForca {
     this.ignicao = false;
     this.marchaEngatada = 0;
     this.omegaRoda.fill(0);
+    this.omegaSaida = 0;
+    this.torcao = 0;
     this.cerda.fill(0);
     this.fx.fill(0);
   }

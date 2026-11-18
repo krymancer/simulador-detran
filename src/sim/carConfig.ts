@@ -53,6 +53,10 @@ export interface CarConfig {
     resistenciaRolagem: number;    // Crr
     rastro: number;                // m, rastro pneumático (torque autoalinhante → FFB)
     relaxacao: number;             // m, comprimento de relaxação lateral (o pneu leva ~isso para criar força)
+    /** Perda de μ por carga: μ = mu·(1 − k·(Fz/Fz0 − 1)), Fz0 = peso/4. Pneu mais carregado agarra proporcionalmente menos. */
+    sensibilidadeCarga: number;
+    /** Quanto o atrito cai quando o pneu desliza de vez (travado/patinando): μ deslizando = mu·(1 − queda). */
+    quedaDeslize: number;
   };
 
   direcao: {
@@ -92,6 +96,11 @@ export interface CarConfig {
     re: number;
     diferencial: number;
     eficiencia: number;       // perdas no câmbio/diferencial
+    /** Inércia do disco da embreagem + eixo primário (kg·m², no lado do motor). */
+    inerciaCaixa: number;
+    /** Semi-eixos (os dois juntos, na roda): torção que dá o “tranco” ao pisar/tirar o pé. */
+    rigidezSemiEixo: number;      // N·m/rad
+    amortecimentoSemiEixo: number; // N·m·s/rad
   };
 
   freio: {
@@ -155,6 +164,8 @@ export const KWID: CarConfig = {
     resistenciaRolagem: 0.012,
     rastro: 0.035,
     relaxacao: 0.35,
+    sensibilidadeCarga: 0.12,
+    quedaDeslize: 0.22,
   },
 
   direcao: { voltasBatenteABatente: 3.0, anguloMaxRoda: (35 * Math.PI) / 180 },
@@ -186,6 +197,9 @@ export const KWID: CarConfig = {
     re: 3.545,
     diferencial: 4.21,
     eficiencia: 0.92,
+    inerciaCaixa: 0.015,
+    rigidezSemiEixo: 10000,
+    amortecimentoSemiEixo: 110,
   },
 
   // Freio de mão ~0,25 g: segura a rampa, mas dá pra sair arrastando (falta comum!).
@@ -246,5 +260,8 @@ export const MOBI: CarConfig = {
     re: 3.909,
     diferencial: 4.2,
     eficiencia: 0.92,
+    inerciaCaixa: 0.015,
+    rigidezSemiEixo: 10000,
+    amortecimentoSemiEixo: 110,
   },
 };

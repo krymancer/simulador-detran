@@ -101,9 +101,10 @@ function frenagem(s: Simulacao, de = 100): { metros: number; segundos: number; t
 }
 
 /** Volante fixo e velocidade subindo devagar: a lateral máxima (v · guinada) é a aderência. */
-function aderenciaLateral(s: Simulacao, volante = 0.12): { g: number; kmh: number } {
+function aderenciaLateral(s: Simulacao, volante = 0.12): { g: number; kmh: number; deriva: number; derivaMax: number } {
   ligar(s);
-  let melhor = 0, vMelhor = 0;
+  let melhor = 0, vMelhor = 0, aMedia = 0, derivaMelhor = 0, derivaMax = 0;
+  const vAnt = new THREE.Vector3();
   let alvo = 15;
   let marcha = 1, trocaAte = -1;
   for (let i = 0; i < HZ_FISICA * 90; i++) {
@@ -120,11 +121,22 @@ function aderenciaLateral(s: Simulacao, volante = 0.12): { g: number; kmh: numbe
       marcha, embreagem: trocando ? 1 : marcha === 1 ? lanc : 0,
       acelerador: trocando ? 0 : Math.min(1, Math.max(0, 0.2 + erro * 0.15)), volante,
     });
-    const w = s.carro.corpo.angvel().y;
-    const a = Math.abs(s.carro.velocidadeLongitudinal() * w) / 9.81;
-    if (t > 5 && a > melhor) { melhor = a; vMelhor = v; }
+    // aceleração lateral de verdade (derivada da velocidade, no eixo lateral do carro), média de 0,5 s
+    const lv = s.carro.corpo.linvel();
+    const rq = s.carro.corpo.rotation();
+    const lado = new THREE.Vector3(1, 0, 0).applyQuaternion(new THREE.Quaternion(rq.x, rq.y, rq.z, rq.w));
+    const vAtual = new THREE.Vector3(lv.x, lv.y, lv.z);
+    if (i > 0) {
+      const aLat = vAtual.clone().sub(vAnt).multiplyScalar(HZ_FISICA).dot(lado);
+      aMedia += (aLat - aMedia) * (1 / (HZ_FISICA * 0.5));
+    }
+    vAnt.copy(vAtual);
+    const deriva = Math.atan2(vAtual.dot(lado), Math.max(0.1, s.carro.velocidadeLongitudinal())) * 180 / Math.PI;
+    const a = Math.abs(aMedia) / 9.81;
+    if (t > 5 && a > melhor) { melhor = a; vMelhor = v; derivaMelhor = deriva; }
+    if (Math.abs(deriva) > derivaMax) derivaMax = Math.abs(deriva);
   }
-  return { g: melhor, kmh: vMelhor };
+  return { g: melhor, kmh: vMelhor, deriva: derivaMelhor, derivaMax };
 }
 
 /** Retomada: embala até `de` em `marcha`, então pé no fundo até `ate`. */
@@ -164,7 +176,7 @@ describe.each([['Mobi', MOBI], ['Kwid', KWID]] as const)('desempenho %s', (nome,
     console.log(
       `${nome}: 0-40 ${fmt(a.marcas[40])} · 0-60 ${fmt(a.marcas[60])} · 0-80 ${fmt(a.marcas[80])} · 0-100 ${fmt(a.marcas[100])} · 0-120 ${fmt(a.marcas[120])}` +
         ` | máx ${vmax.toFixed(0)} km/h | 100-0 ${f.metros.toFixed(1)} m (${f.segundos.toFixed(1)} s${f.travou ? ', travou' : ''})` +
-        ` | lateral ${lat.g.toFixed(2)} g a ${lat.kmh.toFixed(0)} km/h`,
+        ` | lateral ${lat.g.toFixed(2)} g a ${lat.kmh.toFixed(0)} km/h (deriva ${lat.deriva.toFixed(1)}°, máx ${lat.derivaMax.toFixed(1)}°)`,
     );
     const r1 = retomada(pista(cfg), 3, 40, 80);
     const r2 = retomada(pista(cfg), 4, 60, 100);

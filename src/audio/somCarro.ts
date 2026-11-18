@@ -33,6 +33,8 @@ export interface EstadoSom {
   ignicao: boolean;       // chave ligada
   velocidade: number;     // velocidade do carro, m/s (absoluta)
   escorregamento: number; // maior velocidade de deslizamento entre as rodas no chão, m/s
+  /** Maior fração da aderência em uso entre os pneus (0..1): o “arrastar” perto do limite. */
+  aderencia?: number;
   freio: number;          // 0..1 pedal de freio
   embreagem: number;      // 0..1 pedal de embreagem (1 = pisado)
   marcha: number;         // marcha engatada −1..5
@@ -264,6 +266,8 @@ export class SomCarro {
   private bpCant2!: BiquadFilterNode;
   private oscCant!: OscillatorNode;
   private gCant!: GainNode;
+  private gArraste!: GainNode;
+  private bpArraste!: BiquadFilterNode;
   private gVento!: GainNode;
   private bpVento!: BiquadFilterNode;
   private gFreio!: GainNode;
@@ -528,6 +532,14 @@ export class SomCarro {
     somaCant.connect(amCant).connect(this.gCant).connect(this.busExt);
     this.oscCant.start();
 
+    // arraste do pneu perto do limite: “rrrr” grave e granulado, antes do cantar
+    this.bpArraste = filtro('bandpass', 420, 1.1);
+    const lpArraste = filtro('lowpass', 1400, 0.7);
+    const amArraste = ganho(0.6);
+    srcLfo1.connect(ganho(0.4)).connect(amArraste.gain);
+    this.gArraste = ganho(0);
+    srcRosa.connect(this.bpArraste).connect(lpArraste).connect(amArraste).connect(this.gArraste).connect(this.busExt);
+
     this.bpVento = filtro('bandpass', 600, 0.45);
     const hpVento = filtro('highpass', 160, 0.7);
     this.gVento = ganho(0);
@@ -788,6 +800,10 @@ export class SomCarro {
     alvo(this.bpCant1.frequency, fCant, 0.05);
     alvo(this.bpCant2.frequency, fCant * 1.49, 0.05);
     alvo(this.oscCant.frequency, fCant, 0.05);
+    const uso = clamp(e.aderencia ?? 0, 0, 1);
+    const arraste = suave(0.65, 0.97, uso) * clamp((v - 2) / 8, 0, 1);
+    alvo(this.gArraste.gain, 0.22 * arraste, 0.06);
+    alvo(this.bpArraste.frequency, 320 + 9 * v + 200 * suave(0.85, 1, uso), 0.08);
     alvo(this.gVento.gain, Math.min(0.35, 0.00032 * v * v), 0.1);
     alvo(this.bpVento.frequency, 450 + v * 12, 0.1);
     alvo(this.gFreio.gain, 0.05 * clamp(e.freio, 0, 1) * clamp(v / 4, 0, 1) * clamp(1.5 - v / 20, 0, 1), 0.05);
