@@ -22,6 +22,7 @@ export function comoEngatar(x: Exec, m: number): string {
       ? `aperte ${x.nome('marchaMenos')} até passar do neutro para a ré`
       : `use ${x.nome('marchaMais')} para subir e ${x.nome('marchaMenos')} para descer até a ${m}ª`;
   }
+  if (x.dispositivo === 'toque') return `toque no ${m === -1 ? 'R' : m} do câmbio da tela (à direita)`;
   const acao = (m === -1 ? 'marchaR' : `marcha${m}`) as AcaoBotao;
   if (x.dispositivo === 'volante') return `leve a alavanca ${POS_H[m]} (${x.nome(acao)})`;
   return `aperte ${x.nome(acao)}`;
@@ -30,6 +31,7 @@ export function comoEngatar(x: Exec, m: number): string {
 export function comoNeutro(x: Exec): string {
   if (x.dispositivo === 'controle') return `use ${x.nome('marchaMenos')}/${x.nome('marchaMais')} até o N (neutro)`;
   if (x.dispositivo === 'volante') return 'deixe a alavanca solta no meio, sem marcha nenhuma';
+  if (x.dispositivo === 'toque') return 'toque no N do câmbio da tela';
   return 'aperte a tecla N (ou 0)';
 }
 

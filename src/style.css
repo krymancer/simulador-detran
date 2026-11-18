@@ -108,3 +108,19 @@ button:hover { background: #364151; }
 .opcoes .ctrl { display: flex; align-items: center; gap: 8px; }
 .opcoes output { min-width: 48px; text-align: right; font-variant-numeric: tabular-nums; color: var(--sub); }
 .opcoes select, .opcoes input[type=range] { background: #222a33; color: var(--texto); border: 1px solid var(--borda); border-radius: 6px; padding: 4px; }
+
+/* ---------- Celular / tablet (controles de toque ligados) ---------- */
+html, body { overscroll-behavior: none; }
+#app canvas { touch-action: none; }
+body.com-toque { -webkit-user-select: none; user-select: none; }
+body.com-toque .cluster { right: 50%; bottom: 4px; transform: translateX(50%) scale(.6); transform-origin: bottom center; }
+body.com-toque .prova { width: 200px; padding: 8px 10px; font-size: 11px; top: 8px; right: 8px; }
+body.com-toque .prova ol { max-height: 12vh; }
+@media (max-height: 520px) { .inicio .botoes { position: sticky; bottom: -16px; background: var(--fundo-painel); padding: 8px 0; margin-bottom: -8px; } }
+body.com-toque .ex-faixa { top: 8px; width: min(420px, calc(100vw - 2 * 300px)); min-width: 240px; padding: 8px 12px; }
+body.com-toque .ex-texto { font-size: 14px; }
+body.com-toque .tr-painel { left: 50%; bottom: auto; top: 8px; transform: translateX(-50%); width: min(440px, calc(100vw - 2 * 300px)); min-width: 260px;
+  padding: 8px 10px; max-height: 58vh; overflow: auto; }
+body.com-toque .tr-painel.oculto { transform: translate(-50%, -12px); }
+body.com-toque .tr-titulo { font-size: 14px; }
+body.com-toque .tr-texto { font-size: 13px; }

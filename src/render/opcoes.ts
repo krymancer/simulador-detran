@@ -21,6 +21,10 @@ export interface Config {
   examinador: boolean;
   trafego: boolean;
   pedestres: boolean;
+  /** Controles na tela (celular/tablet). auto: liga em aparelho de toque. */
+  controlesToque: 'auto' | 'sim' | 'nao';
+  /** Como virar o volante no toque: volante desenhado na tela ou inclinando o aparelho. */
+  direcaoToque: 'volante' | 'inclinar';
 }
 
 export const CONFIG_PADRAO: Config = {
@@ -36,6 +40,8 @@ export const CONFIG_PADRAO: Config = {
   examinador: true,
   trafego: true,
   pedestres: true,
+  controlesToque: 'auto',
+  direcaoToque: 'volante',
 };
 
 const CHAVE = 'detran.opcoes';
@@ -47,7 +53,9 @@ function carregar(): Config {
   } catch {
     /* sem storage */
   }
-  return { ...CONFIG_PADRAO };
+  // celular/tablet: começa na qualidade média (sombras e resolução mais leves)
+  const toque = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
+  return { ...CONFIG_PADRAO, ...(toque ? { qualidade: 'media' as Qualidade } : {}) };
 }
 
 type Campo =
@@ -66,6 +74,13 @@ const CAMPOS: { titulo: string; campos: Campo[] }[] = [
       { k: 'rotacaoVolante', tipo: 'num', rotulo: 'Rotação do volante físico', min: 180, max: 1080, passo: 90, unidade: '°', dica: 'G29: 900°. Ajuste igual ao configurado no driver.' },
       { k: 'volante1para1', tipo: 'bool', rotulo: 'Volante 1:1', dica: 'Ligado: girar 90° no seu volante gira 90° no do carro. Desligado: o curso todo vai até o batente do carro.' },
       { k: 'sensibilidade', tipo: 'num', rotulo: 'Sensibilidade (controle/teclado)', min: 0.5, max: 2, passo: 0.1, unidade: '×' },
+    ],
+  },
+  {
+    titulo: 'Celular / tablet',
+    campos: [
+      { k: 'controlesToque', tipo: 'sel', rotulo: 'Controles na tela', opcoes: [['auto', 'Automático'], ['sim', 'Sempre'], ['nao', 'Nunca']], dica: 'Automático: aparecem em aparelhos com tela de toque.' },
+      { k: 'direcaoToque', tipo: 'sel', rotulo: 'Direção', opcoes: [['volante', 'Volante na tela'], ['inclinar', 'Inclinar o aparelho']], dica: 'Inclinar: segure o aparelho deitado e gire como um volante. “Zerar” marca o centro.' },
     ],
   },
   {

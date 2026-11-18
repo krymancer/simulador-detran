@@ -22,6 +22,7 @@ import { Acao, ehVolante } from './input/input';
 import { corSemaforo, CorSemaforo, Prova } from './exam/exam';
 import { Entrada, EstadoEntrada } from './input/input';
 import { Calibracao } from './input/calibration';
+import { ControlesToque, temToque } from './input/toque';
 import { Hud } from './render/hud';
 import { VisualCarro } from './render/carVisual';
 import { Retrovisores } from './render/mirrors';
@@ -61,6 +62,8 @@ window.addEventListener('resize', () => {
 
 // ---------- Sistemas ----------
 const entrada = new Entrada();
+const toque = new ControlesToque(app);
+entrada.toque = toque;
 const hud = new Hud(app);
 const calibracao = new Calibracao(entrada, app);
 let som = new SomCarro({ rpmMarchaLenta: MOBI.motor.rpmMarchaLenta, rpmCorte: MOBI.motor.rpmCorte });
@@ -85,6 +88,7 @@ function aplicarQualidade(c: Config): void {
   }
   if (jogo) jogo.espelhos.intervaloLaterais = c.qualidade === 'alta' ? 2 : c.qualidade === 'media' ? 3 : 4;
   entrada.sensibilidade = c.sensibilidade;
+  toque.definir(c.controlesToque === 'sim' || (c.controlesToque === 'auto' && temToque()), c.direcaoToque);
   som.volume = c.volume;
   somFerrovia.volume = c.volume;
   if (ceu.horario !== c.horario) ceu.definirHorario(c.horario);
@@ -287,12 +291,22 @@ window.addEventListener('drop', (e) => {
 // ---------- Câmera ----------
 let modoCamera: ModoCamera = 'cockpit';
 const olhar = { yaw: 0, pitch: 0, arrastando: false, yawSuave: 0, tras: 0 };
-renderer.domElement.addEventListener('pointerdown', (e) => { olhar.arrastando = true; renderer.domElement.setPointerCapture(e.pointerId); });
-renderer.domElement.addEventListener('pointerup', () => (olhar.arrastando = false));
+const ultimoPonteiro = { id: -1, x: 0, y: 0 };
+renderer.domElement.addEventListener('pointerdown', (e) => {
+  if (olhar.arrastando) return; // um dedo só
+  olhar.arrastando = true;
+  Object.assign(ultimoPonteiro, { id: e.pointerId, x: e.clientX, y: e.clientY });
+  renderer.domElement.setPointerCapture(e.pointerId);
+});
+const fimArrasto = (e: PointerEvent) => { if (e.pointerId === ultimoPonteiro.id) olhar.arrastando = false; };
+renderer.domElement.addEventListener('pointerup', fimArrasto);
+renderer.domElement.addEventListener('pointercancel', fimArrasto);
 renderer.domElement.addEventListener('pointermove', (e) => {
-  if (!olhar.arrastando) return;
-  olhar.yaw = Math.max(-2.4, Math.min(2.4, olhar.yaw - e.movementX * 0.004));
-  olhar.pitch = Math.max(-0.8, Math.min(0.6, olhar.pitch - e.movementY * 0.004));
+  if (!olhar.arrastando || e.pointerId !== ultimoPonteiro.id) return;
+  const dx = e.clientX - ultimoPonteiro.x, dy = e.clientY - ultimoPonteiro.y;
+  Object.assign(ultimoPonteiro, { x: e.clientX, y: e.clientY });
+  olhar.yaw = Math.max(-2.4, Math.min(2.4, olhar.yaw - dx * 0.004));
+  olhar.pitch = Math.max(-0.8, Math.min(0.6, olhar.pitch - dy * 0.004));
 });
 const camPos = new THREE.Vector3();
 const camAlvo = new THREE.Vector3();
@@ -327,9 +341,24 @@ const NOMES_TECLADO: Partial<Record<Acao, string>> = {
   cinto: 'tecla C', olharEsq: 'tecla Z', olharDir: 'tecla X', olharTras: 'tecla B', camera: 'tecla V', encerrar: 'Enter', reiniciar: 'Backspace',
 };
 
+const NOMES_TOQUE: Partial<Record<Acao, string>> = {
+  embreagem: 'o pedal Embreagem da tela, à esquerda (dedo mais alto = mais fundo)',
+  freio: 'o pedal Freio da tela', acelerador: 'o pedal Acelerador da tela, à direita',
+  marcha1: 'o 1 do câmbio da tela', marcha2: 'o 2 do câmbio da tela', marcha3: 'o 3 do câmbio da tela',
+  marcha4: 'o 4 do câmbio da tela', marcha5: 'o 5 do câmbio da tela', marchaR: 'o R do câmbio da tela',
+  freioDeMao: 'o botão Freio de mão', partida: 'o botão Partida (segure)', setaEsq: 'o botão ◀ Seta', setaDir: 'o botão Seta ▶',
+  farol: 'o botão Farol', alerta: 'o botão Alerta', cinto: 'o botão Cinto', olharEsq: 'o botão 👀◀', olharDir: 'o botão ▶👀',
+  olharTras: 'o botão Trás', camera: 'o botão 🎥',
+};
+function nomeToque(a: Acao): string {
+  if (a === 'volante') return opcoes.valores.direcaoToque === 'inclinar' ? 'inclinando o aparelho, como um volante' : 'o volante da tela, à esquerda';
+  return NOMES_TOQUE[a] ?? a;
+}
+
 function perfilControles(): { dispositivo: Dispositivo; nomeDe: (acao: Acao) => string } {
   const gps = entrada.gamepads();
   const gp = gps.find((g) => ehVolante(g)) ?? gps[0];
+  if (!gp && toque.estaAtivo) return { dispositivo: 'toque', nomeDe: nomeToque };
   if (!gp) return { dispositivo: 'teclado', nomeDe: (a) => NOMES_TECLADO[a] ?? a };
   const perfil = entrada.perfil(gp);
   const volante = perfil.tipo === 'volante';
@@ -684,6 +713,7 @@ function quadro(agora: number): void {
   }
 
   hud.atualizar(jogo.sim.carro, ent, jogo.prova, t, piscando, modoCamera, dt);
+  toque.atualizarUi({ marcha: ent.marcha, freioDeMao: ent.freioDeMao, cinto: ent.cinto, farol: ent.farol, alerta: ent.alerta, seta: ent.seta }, ent.volante);
   // Treino guiado
   if (emTreino) treino.atualizar(dt);
   if (treino.geracao !== geracaoFalada) {
@@ -717,6 +747,22 @@ function quadro(agora: number): void {
   renderer.render(cena, camera);
 }
 
+// ---------- Toque: menus e tela cheia ----------
+async function telaCheiaPaisagem(): Promise<void> {
+  try {
+    if (!document.fullscreenElement) await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+    await (screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> }).lock?.('landscape');
+  } catch { /* navegador sem suporte (iPhone): segue sem tela cheia */ }
+}
+toque.aoAcao = (a) => {
+  if (a === 'treino') { if (uiTreino.menuAberto) uiTreino.fecharMenu(); else uiTreino.abrirMenu(); }
+  else if (a === 'opcoes') { if (opcoes.estaAberta) opcoes.fechar(); else opcoes.abrir(); }
+  else if (a === 'telaCheia') {
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    else telaCheiaPaisagem();
+  } else if (a === 'zerarInclinacao') toque.zerarInclinacao();
+};
+
 // ---------- Início ----------
 async function iniciar(): Promise<void> {
   await Promise.all([iniciarRapier(), carregarModelosCarros().catch((e) => console.warn('carros do trânsito: usando os simples', e))]);
@@ -734,6 +780,10 @@ async function iniciar(): Promise<void> {
 
   const inicio = document.getElementById('inicio')!;
   const fecharInicio = () => {
+    if (toque.estaAtivo) {
+      telaCheiaPaisagem();
+      toque.pedirSensor().then(() => setTimeout(() => toque.zerarInclinacao(), 400));
+    }
     som.iniciar();
     somFerrovia.iniciar();
     inicio.classList.add('oculto');

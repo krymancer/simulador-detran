@@ -14,7 +14,7 @@ export type AlvoCamera =
   | 'espelhoCentro' | 'espelhoEsq' | 'espelhoDir'
   | 'painel' | 'frente' | null;
 
-export type Dispositivo = 'volante' | 'controle' | 'teclado';
+export type Dispositivo = 'volante' | 'controle' | 'teclado' | 'toque';
 
 export interface ContextoTreino {
   sim: Simulacao;

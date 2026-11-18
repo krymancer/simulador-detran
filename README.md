@@ -35,6 +35,7 @@ npm test         # testes de física e da prova (headless, Node)
 | `src/world/iluminacao.ts` | Iluminação pública noturna. |
 | `src/exam/exam.ts` | Avaliador: detecta as faltas a cada passo da física. |
 | `src/input/` | Teclado + Gamepad API (controle, G29, câmbio H) e a tela de calibração (F2). |
+| `src/input/toque.ts` | Celular/tablet: pedais analógicos na tela (dedo mais alto = mais fundo), volante na tela ou inclinando o aparelho, câmbio em H, botões. Liga sozinho em tela de toque (Opções → Celular / tablet); `?toque=1` força no PC. |
 | `src/render/`, `src/audio/` | Carro low-poly, cockpit com volante girando, retrovisores, HUD, som do motor sintetizado. |
 
 ## Mapas no Blender

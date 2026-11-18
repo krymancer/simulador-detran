@@ -3,6 +3,7 @@
  * câmbio H) pela Gamepad API. Cada dispositivo tem um perfil de vínculos salvo
  * no localStorage, criado pela tela de calibração.
  */
+import type { ControlesToque } from './toque';
 
 export const EIXOS = ['volante', 'acelerador', 'freio', 'embreagem', 'olhar'] as const;
 export const BOTOES = [
@@ -243,6 +244,9 @@ export class Entrada {
   private farol = false;
   private alerta = false;
 
+  /** Controles de toque (celular/tablet), quando existem. */
+  toque: ControlesToque | null = null;
+
   /** Enquanto a calibração está aberta, o jogo não lê nada. */
   pausado = false;
   /** Multiplica a velocidade de giro do volante no controle/teclado (opções). */
@@ -381,6 +385,19 @@ export class Entrada {
     }
     this.teclasBorda.clear();
 
+    // --- Toque ---
+    const tq = this.toque?.ler(dt) ?? null;
+    let marchaToque: number | null = null;
+    if (tq && !this.pausado) {
+      if (tq.volante !== null && Math.abs(tq.volante) > Math.abs(volante)) volante = tq.volante;
+      acelerador = Math.max(acelerador, tq.acelerador);
+      freio = Math.max(freio, tq.freio);
+      embreagem = Math.max(embreagem, tq.embreagem);
+      for (const b of tq.bordas) bordas.add(b);
+      for (const b of tq.segurando) segurando.add(b);
+      marchaToque = tq.marcha;
+    }
+
     // --- Marchas ---
     const seq: number[] = [-1, 0, 1, 2, 3, 4, 5];
     if (bordas.has('marchaMais')) this.marchaSequencial = seq[Math.min(seq.length - 1, seq.indexOf(this.marchaSequencial) + 1)];
@@ -390,6 +407,7 @@ export class Entrada {
     for (const [a, m] of teclaMarcha) {
       if (bordas.has(a) && !temCambioH) this.marchaSequencial = m;
     }
+    if (marchaToque !== null && !temCambioH) this.marchaSequencial = marchaToque;
     const marcha = temCambioH ? (marchaH ?? 0) : this.marchaSequencial;
     if (temCambioH) this.marchaSequencial = marcha;
 

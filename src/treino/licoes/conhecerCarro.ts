@@ -71,7 +71,9 @@ export const LICAO_CONHECER: DefLicao = {
           ? 'Este é o câmbio. As marchas ficam num desenho de H: primeira à esquerda na frente, segunda à esquerda atrás, terceira no meio na frente, quarta no meio atrás, quinta à direita na frente. A ré, no câmbio do G29, é empurrando a alavanca para baixo e indo para a direita e para trás. No meio, solta, a alavanca fica em neutro. Sempre troque com a embreagem pisada até o fundo.'
           : x.dispositivo === 'controle'
             ? `Este é o câmbio. No controle as marchas são em sequência: ${x.nome('marchaMais')} sobe uma marcha e ${x.nome('marchaMenos')} desce. A ordem é: ré, neutro, primeira, segunda, terceira, quarta e quinta. Sempre troque com a embreagem pisada até o fundo.`
-            : 'Este é o câmbio. No teclado, as teclas de 1 a 5 escolhem a marcha, R é a ré e N é o neutro. Num carro de verdade, a alavanca faz um desenho de H. Sempre troque com a embreagem pisada até o fundo.',
+            : x.dispositivo === 'toque'
+              ? 'Este é o câmbio. Na tela ele fica à direita, desenhado como o H de um carro de verdade: primeira, terceira e quinta em cima; segunda, quarta e ré embaixo; N no meio é o neutro. Toque ou arraste o dedo até a marcha. Sempre troque com a embreagem no fundo: o pedal Embreagem, à esquerda, com o dedo lá em cima.'
+              : 'Este é o câmbio. No teclado, as teclas de 1 a 5 escolhem a marcha, R é a ré e N é o neutro. Num carro de verdade, a alavanca faz um desenho de H. Sempre troque com a embreagem pisada até o fundo.',
       'cambio'),
     {
       id: 'marchas',
